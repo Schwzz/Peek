@@ -8,6 +8,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
+import com.example.service.MediaProjectionService
 import com.example.service.OverlayStateManager
 import com.example.service.ScreenCaptureHelper
 import kotlinx.coroutines.launch
@@ -23,6 +24,9 @@ class ScreenCaptureActivity : ComponentActivity() {
             val intentData = result.data!!
             lifecycleScope.launch {
                 try {
+                    // Start FGS of type mediaProjection now that user consented
+                    MediaProjectionService.start(this@ScreenCaptureActivity)
+
                     val mediaProjection = mediaProjectionManager.getMediaProjection(
                         result.resultCode,
                         intentData
@@ -45,6 +49,7 @@ class ScreenCaptureActivity : ComponentActivity() {
                     OverlayStateManager.setErrorMessage("Capture error: ${e.message}")
                     OverlayStateManager.setPanelExpanded(true)
                 } finally {
+                    MediaProjectionService.stop(this@ScreenCaptureActivity)
                     finish()
                 }
             }
@@ -64,7 +69,6 @@ class ScreenCaptureActivity : ComponentActivity() {
 
     override fun finish() {
         super.finish()
-        // No exit animation for invisible transition
         overridePendingTransition(0, 0)
     }
 }
