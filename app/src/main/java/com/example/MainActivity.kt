@@ -18,8 +18,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.example.service.OverlayStateManager
 import com.example.ui.screens.MainScreen
@@ -28,8 +26,8 @@ import com.example.ui.theme.PeekTheme
 
 class MainActivity : ComponentActivity() {
 
-    private var initialOpenSettings = false
-    private var initialPickImage = false
+    private val openSettingsTrigger = mutableStateOf(false)
+    private val pickImageTrigger = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,7 +37,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PeekTheme {
-                var showSettingsDialog by remember { mutableStateOf(initialOpenSettings) }
+                val showSettingsDialog by openSettingsTrigger
 
                 // Image picker launcher for intent-triggered pick
                 val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -80,22 +78,24 @@ class MainActivity : ComponentActivity() {
                             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                     }
+                }
 
-                    if (initialPickImage) {
+                LaunchedEffect(pickImageTrigger.value) {
+                    if (pickImageTrigger.value) {
                         photoPickerLauncher.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
-                        initialPickImage = false
+                        pickImageTrigger.value = false
                     }
                 }
 
                 MainScreen(
-                    onOpenSettingsRequested = { showSettingsDialog = true }
+                    onOpenSettingsRequested = { openSettingsTrigger.value = true }
                 )
 
                 if (showSettingsDialog) {
                     SettingsDialog(
-                        onDismiss = { showSettingsDialog = false }
+                        onDismiss = { openSettingsTrigger.value = false }
                     )
                 }
             }
@@ -111,9 +111,9 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         if (intent == null) return
         if (intent.action == ACTION_OPEN_SETTINGS) {
-            initialOpenSettings = true
+            openSettingsTrigger.value = true
         } else if (intent.action == ACTION_PICK_IMAGE) {
-            initialPickImage = true
+            pickImageTrigger.value = true
         }
     }
 

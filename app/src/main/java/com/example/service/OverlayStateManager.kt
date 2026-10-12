@@ -83,53 +83,67 @@ object OverlayStateManager {
         _statusMessage.value = status
     }
 
-    fun sendPrompt(prompt: String, context: Context) {
-        val trimmed = prompt.trim()
-        val image = _currentImage.value
+    private val requestLock = Any()
 
-        if (trimmed.isEmpty() && image == null) {
-            _errorMessage.value = "Please select an image or type a prompt first."
-            return
-        }
+    fun sendPrompt(prompt: String, context: Context): Boolean {
+        synchronized(requestLock) {
+            if (_isLoading.value) {
+                return false
+            }
 
-        val displayPrompt = trimmed.ifEmpty { "Explain this image" }
-        val userMessage = ChatMessage(
-            sender = MessageSender.USER,
-            text = displayPrompt,
-            hasImageAttachment = image != null
-        )
+            val trimmed = prompt.trim()
+            val image = _currentImage.value
 
-        _chatMessages.value = _chatMessages.value + userMessage
-        _isLoading.value = true
-        _errorMessage.value = null
-        _statusMessage.value = "Peek is analyzing with AI..."
+            if (trimmed.isEmpty() && image == null) {
+                _errorMessage.value = "Please select an image or type a prompt first."
+                return false
+            }
 
-        scope.launch {
-            val repository = VisionAiRepository.getInstance(context)
-            val result = repository.analyzeImage(
-                bitmap = image,
-                prompt = displayPrompt,
-                history = _chatMessages.value.dropLast(1)
+            val displayPrompt = trimmed.ifEmpty { "Explain this image" }
+            val userMessage = ChatMessage(
+                sender = MessageSender.USER,
+                text = displayPrompt,
+                hasImageAttachment = image != null
             )
 
-            _isLoading.value = false
-            result.onSuccess { aiResponse ->
-                val aiMessage = ChatMessage(
-                    sender = MessageSender.AI,
-                    text = aiResponse
-                )
-                _chatMessages.value = _chatMessages.value + aiMessage
-                _statusMessage.value = "Analysis complete. You can ask follow-up questions."
-            }.onFailure { error ->
-                val errorText = error.localizedMessage ?: "Failed to generate AI response."
-                _errorMessage.value = errorText
-                _chatMessages.value = _chatMessages.value + ChatMessage(
-                    sender = MessageSender.AI,
-                    text = "⚠️ $errorText",
-                    isError = true
-                )
-                _statusMessage.value = "Error occurred."
+            _chatMessages.value = _chatMessages.value + userMessage
+            _isLoading.value = true
+            _errorMessage.value = null
+            _statusMessage.value = "Peek is analyzing with AI..."
+
+            scope.launch {
+                try {
+                    val repository = VisionAiRepository.getInstance(context)
+                    val result = repository.analyzeImage(
+                        bitmap = image,
+                        prompt = displayPrompt,
+                        history = _chatMessages.value.dropLast(1)
+                    )
+
+                    result.onSuccess { aiResponse ->
+                        val aiMessage = ChatMessage(
+                            sender = MessageSender.AI,
+                            text = aiResponse
+                        )
+                        _chatMessages.value = _chatMessages.value + aiMessage
+                        _statusMessage.value = "Analysis complete. You can ask follow-up questions."
+                    }.onFailure { error ->
+                        val errorText = error.localizedMessage ?: "Failed to generate AI response."
+                        _errorMessage.value = errorText
+                        _chatMessages.value = _chatMessages.value + ChatMessage(
+                            sender = MessageSender.AI,
+                            text = "⚠️ $errorText",
+                            isError = true
+                        )
+                        _statusMessage.value = "Error occurred."
+                    }
+                } finally {
+                    synchronized(requestLock) {
+                        _isLoading.value = false
+                    }
+                }
             }
+            return true
         }
     }
 }

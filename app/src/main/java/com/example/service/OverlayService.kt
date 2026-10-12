@@ -16,6 +16,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -110,7 +111,8 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -133,12 +135,14 @@ class OverlayService : Service() {
                 }
             }
 
-            // Draggable Touch Listener
+            // Draggable Touch Listener with reliable tap detection
+            val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
             var initialX = 0
             var initialY = 0
             var initialTouchX = 0f
             var initialTouchY = 0f
             var isDragging = false
+            var startClickTime = 0L
 
             setOnTouchListener { view, event ->
                 val params = bubbleParams ?: return@setOnTouchListener false
@@ -149,23 +153,28 @@ class OverlayService : Service() {
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
                         isDragging = false
+                        startClickTime = System.currentTimeMillis()
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = (event.rawX - initialTouchX).toInt()
                         val dy = (event.rawY - initialTouchY).toInt()
-                        if (abs(dx) > 15 || abs(dy) > 15) {
+                        if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
                             isDragging = true
                         }
-                        params.x = initialX + dx
-                        params.y = initialY + dy
-                        runCatching { windowManager.updateViewLayout(view, params) }
+                        if (isDragging) {
+                            params.x = initialX + dx
+                            params.y = initialY + dy
+                            runCatching { windowManager.updateViewLayout(view, params) }
+                        }
                         true
                     }
                     MotionEvent.ACTION_UP -> {
-                        if (!isDragging) {
+                        val clickDuration = System.currentTimeMillis() - startClickTime
+                        if (!isDragging && clickDuration < 400) {
                             view.performClick()
-                        } else {
+                            OverlayStateManager.togglePanel()
+                        } else if (isDragging) {
                             // Snap to closest screen edge
                             val metrics = resources.displayMetrics
                             val screenWidth = metrics.widthPixels
@@ -181,13 +190,17 @@ class OverlayService : Service() {
 
         runCatching { windowManager.addView(bubbleView, bubbleParams) }
 
-        // 2. Setup Overlay Panel
+        // 2. Setup Overlay Panel - bound strictly to the panel's dimensions so taps outside reach underlying app
+        val displayMetrics = resources.displayMetrics
+        val panelWidth = (displayMetrics.widthPixels * 0.92f).toInt().coerceAtMost((460 * displayMetrics.density).toInt())
+
         panelParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            panelWidth,
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.CENTER
@@ -199,45 +212,47 @@ class OverlayService : Service() {
             setViewTreeSavedStateRegistryOwner(owner)
             setViewTreeViewModelStoreOwner(owner)
 
+            // When user taps outside the visible overlay card, minimize the panel without blocking touch to the app
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                    OverlayStateManager.setPanelExpanded(false)
+                    true
+                } else {
+                    false
+                }
+            }
+
             setContent {
                 PeekTheme {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        OverlayPanelView(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .widthIn(max = 480.dp),
-                            onCaptureScreenRequested = {
-                                val intent = Intent(this@OverlayService, ScreenCaptureActivity::class.java).apply {
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                startActivity(intent)
-                            },
-                            onPickImageRequested = {
-                                val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
-                                    action = MainActivity.ACTION_PICK_IMAGE
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                                }
-                                startActivity(intent)
-                            },
-                            onMinimizeRequested = {
-                                OverlayStateManager.setPanelExpanded(false)
-                            },
-                            onCloseRequested = {
-                                OverlayStateManager.setPanelExpanded(false)
-                            },
-                            onOpenSettingsRequested = {
-                                val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
-                                    action = MainActivity.ACTION_OPEN_SETTINGS
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                                }
-                                startActivity(intent)
+                    OverlayPanelView(
+                        modifier = Modifier.fillMaxWidth(),
+                        onCaptureScreenRequested = {
+                            val intent = Intent(this@OverlayService, ScreenCaptureActivity::class.java).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             }
-                        )
-                    }
+                            startActivity(intent)
+                        },
+                        onPickImageRequested = {
+                            val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
+                                action = MainActivity.ACTION_PICK_IMAGE
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            }
+                            startActivity(intent)
+                        },
+                        onMinimizeRequested = {
+                            OverlayStateManager.setPanelExpanded(false)
+                        },
+                        onCloseRequested = {
+                            OverlayStateManager.setPanelExpanded(false)
+                        },
+                        onOpenSettingsRequested = {
+                            val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
+                                action = MainActivity.ACTION_OPEN_SETTINGS
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            }
+                            startActivity(intent)
+                        }
+                    )
                 }
             }
         }

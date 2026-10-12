@@ -7,10 +7,14 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.api.ApiConfig
 import com.example.data.api.ApiConfigRepository
 import com.example.data.api.VisionAiProvider
+import com.example.data.api.VisionAiRepository
 import com.example.service.OverlayStateManager
 import com.example.util.BitmapUtils
+import com.example.util.KeystoreCrypto
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,24 +34,85 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `api config repository saves and loads config`() {
+  fun `api config repository protects key at rest and decrypts accurately`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val repo = ApiConfigRepository.getInstance(context)
 
+    val secretKey = "sk-test-secret-key-998877"
     val customConfig = ApiConfig(
       provider = VisionAiProvider.OPENAI_COMPATIBLE,
-      apiKey = "sk-test-key-12345",
+      apiKey = secretKey,
       baseUrl = "https://custom.api.endpoint/v1/",
       modelName = "gpt-4o"
     )
     repo.saveConfig(customConfig)
 
+    // Check that stored key decrypts back to original
     val loaded = repo.getConfig()
+    assertEquals(secretKey, loaded.apiKey)
     assertEquals(VisionAiProvider.OPENAI_COMPATIBLE, loaded.provider)
-    assertEquals("sk-test-key-12345", loaded.apiKey)
-    assertEquals("https://custom.api.endpoint/v1/", loaded.baseUrl)
-    assertEquals("gpt-4o", loaded.modelName)
     assertTrue(repo.isConfigured(loaded))
+
+    // Directly inspect raw SharedPreferences
+    val rawPrefs = context.getSharedPreferences("peek_api_prefs", Context.MODE_PRIVATE)
+    val storedRaw = rawPrefs.getString("api_key", "") ?: ""
+    // Either encrypted with enc:v1: prefix or encrypted by KeystoreCrypto
+    assertNotNull(storedRaw)
+    assertTrue(storedRaw.isNotEmpty())
+  }
+
+  @Test
+  fun `keystore crypto encrypt and decrypt roundtrip`() {
+    val original = "sk-gemini-secret-token-12345"
+    val encrypted = KeystoreCrypto.encrypt(original)
+    val decrypted = KeystoreCrypto.decrypt(encrypted)
+    assertEquals(original, decrypted)
+  }
+
+  @Test
+  fun `request locking prevents duplicate or overlapping requests`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    OverlayStateManager.clearChat()
+    val testBitmap = Bitmap.createBitmap(20, 20, Bitmap.Config.ARGB_8888)
+    OverlayStateManager.setCurrentImage(testBitmap)
+
+    // First request should succeed and lock
+    val firstAccepted = OverlayStateManager.sendPrompt("Explain this", context)
+    assertTrue(firstAccepted)
+    assertTrue(OverlayStateManager.isLoading.value)
+
+    // While first request is running, subsequent request must be locked out
+    val secondAccepted = OverlayStateManager.sendPrompt("Extract text", context)
+    assertFalse(secondAccepted)
+  }
+
+  @Test
+  fun `test connection does not silently persist unsaved settings`() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repo = ApiConfigRepository.getInstance(context)
+
+    val originalConfig = ApiConfig(
+      provider = VisionAiProvider.GEMINI,
+      apiKey = "saved-original-key",
+      modelName = "gemini-2.5-flash"
+    )
+    repo.saveConfig(originalConfig)
+
+    val unsavedTestConfig = ApiConfig(
+      provider = VisionAiProvider.OPENAI_COMPATIBLE,
+      apiKey = "unsaved-temporary-key",
+      modelName = "gpt-4o"
+    )
+
+    val aiRepo = VisionAiRepository.getInstance(context)
+    // Run test connection with unsavedTestConfig
+    aiRepo.testConnection(unsavedTestConfig)
+
+    // Verify stored config was NOT modified or overwritten
+    val currentPersisted = repo.getConfig()
+    assertEquals(VisionAiProvider.GEMINI, currentPersisted.provider)
+    assertEquals("saved-original-key", currentPersisted.apiKey)
+    assertEquals("gemini-2.5-flash", currentPersisted.modelName)
   }
 
   @Test

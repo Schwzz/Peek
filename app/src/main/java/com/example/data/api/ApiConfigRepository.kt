@@ -3,6 +3,7 @@ package com.example.data.api
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.BuildConfig
+import com.example.util.KeystoreCrypto
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,9 +35,10 @@ class ApiConfigRepository(context: Context) {
     }
 
     fun saveConfig(newConfig: ApiConfig) {
+        val encryptedKey = KeystoreCrypto.encrypt(newConfig.apiKey)
         prefs.edit().apply {
             putString("provider", newConfig.provider.name)
-            putString("api_key", newConfig.apiKey)
+            putString("api_key", encryptedKey)
             putString("base_url", newConfig.baseUrl)
             putString("model_name", newConfig.modelName)
             apply()
@@ -47,14 +49,15 @@ class ApiConfigRepository(context: Context) {
     private fun loadConfig(): ApiConfig {
         val providerStr = prefs.getString("provider", VisionAiProvider.GEMINI.name)
         val provider = runCatching { VisionAiProvider.valueOf(providerStr!!) }.getOrDefault(VisionAiProvider.GEMINI)
-        val apiKey = prefs.getString("api_key", "") ?: ""
+        val storedApiKey = prefs.getString("api_key", "") ?: ""
+        val decryptedApiKey = KeystoreCrypto.decrypt(storedApiKey)
         val baseUrl = prefs.getString("base_url", VisionAiProvider.OPENAI_COMPATIBLE.defaultBaseUrl) ?: VisionAiProvider.OPENAI_COMPATIBLE.defaultBaseUrl
         val defaultModel = provider.defaultModel
         val modelName = prefs.getString("model_name", defaultModel) ?: defaultModel
 
         return ApiConfig(
             provider = provider,
-            apiKey = apiKey,
+            apiKey = decryptedApiKey,
             baseUrl = baseUrl,
             modelName = modelName
         )

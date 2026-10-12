@@ -29,8 +29,8 @@ class VisionAiRepository(private val context: Context) {
         }
     }
 
-    suspend fun testConnection(): Result<String> {
-        val config = configRepository.getConfig()
+    suspend fun testConnection(customConfig: ApiConfig? = null): Result<String> {
+        val config = customConfig ?: configRepository.getConfig()
         val apiKey = configRepository.getEffectiveApiKey(config)
         if (apiKey.isBlank()) {
             return Result.failure(IllegalStateException("No API key found. Please enter an API key first."))

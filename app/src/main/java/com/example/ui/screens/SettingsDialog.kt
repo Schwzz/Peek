@@ -396,17 +396,16 @@ fun SettingsDialog(
                                 isTestingConnection = true
                                 testResult = null
 
-                                // Temporarily save to test with current values
+                                // Test unsaved configuration without persisting it
                                 val testConfig = ApiConfig(
                                     provider = selectedProvider,
                                     apiKey = apiKey,
                                     baseUrl = baseUrl,
                                     modelName = modelName
                                 )
-                                configRepo.saveConfig(testConfig)
 
                                 val repo = VisionAiRepository.getInstance(context)
-                                val result = repo.testConnection()
+                                val result = repo.testConnection(testConfig)
                                 isTestingConnection = false
                                 result.onSuccess { msg ->
                                     isTestSuccess = true

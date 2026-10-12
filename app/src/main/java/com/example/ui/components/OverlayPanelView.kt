@@ -542,20 +542,26 @@ fun OverlayPanelView(
                 for (suggestion in promptSuggestions) {
                     FilterChip(
                         selected = false,
+                        enabled = !isLoading,
                         onClick = {
-                            inputPrompt = suggestion
-                            OverlayStateManager.sendPrompt(suggestion, context)
-                            inputPrompt = ""
+                            if (!isLoading) {
+                                inputPrompt = suggestion
+                                OverlayStateManager.sendPrompt(suggestion, context)
+                                inputPrompt = ""
+                            }
                         },
                         label = { Text(suggestion, fontSize = 11.sp) },
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = DarkNavySurfaceElevated,
-                            labelColor = Color(0xFFCBD5E1)
+                            labelColor = Color(0xFFCBD5E1),
+                            disabledContainerColor = DarkNavySurfaceElevated.copy(alpha = 0.5f),
+                            disabledLabelColor = Color(0xFF64748B)
                         ),
                         border = FilterChipDefaults.filterChipBorder(
-                            enabled = true,
+                            enabled = !isLoading,
                             selected = false,
-                            borderColor = Color(0xFF334155)
+                            borderColor = Color(0xFF334155),
+                            disabledBorderColor = Color(0xFF1E293B)
                         )
                     )
                 }
