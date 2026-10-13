@@ -29,12 +29,33 @@ object ScreenCaptureHelper {
         val handler = Handler(Looper.getMainLooper())
         var isCompleted = false
 
+        val projectionCallback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                if (!isCompleted) {
+                    isCompleted = true
+                    try {
+                        virtualDisplay?.release()
+                        imageReader.close()
+                    } catch (_: Exception) {}
+                    if (continuation.isActive) {
+                        continuation.resume(null)
+                    }
+                }
+            }
+        }
+
         fun cleanup() {
             try {
                 virtualDisplay?.release()
+                virtualDisplay = null
                 imageReader.close()
+                mediaProjection.unregisterCallback(projectionCallback)
                 mediaProjection.stop()
             } catch (_: Exception) {}
+        }
+
+        runCatching {
+            mediaProjection.registerCallback(projectionCallback, handler)
         }
 
         imageReader.setOnImageAvailableListener({ reader ->
