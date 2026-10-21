@@ -57,30 +57,24 @@ class MediaProjectionService : Service() {
                         )
                         if (bitmap != null) {
                             OverlayStateManager.setCapturedScreenToCrop(bitmap)
-                            val selectorIntent = Intent(
-                                this@MediaProjectionService,
-                                ScreenSelectorActivity::class.java
-                            ).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            startActivity(selectorIntent)
                         } else {
                             OverlayStateManager.setErrorMessage("Failed to capture screen buffer. Please try again.")
-                            OverlayStateManager.setPanelExpanded(true)
+                            OverlayStateManager.finishCapture()
                         }
                     } else {
                         OverlayStateManager.setErrorMessage("MediaProjection could not be initialized.")
-                        OverlayStateManager.setPanelExpanded(true)
+                        OverlayStateManager.finishCapture()
                     }
                 } catch (e: Exception) {
                     OverlayStateManager.setErrorMessage("Capture error: ${e.message}")
-                    OverlayStateManager.setPanelExpanded(true)
+                    OverlayStateManager.finishCapture()
                 } finally {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
             }
         } else {
+            OverlayStateManager.finishCapture()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -128,6 +122,9 @@ class MediaProjectionService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
+        if (OverlayStateManager.capturedScreenToCrop.value == null && OverlayStateManager.isCapturing.value) {
+            OverlayStateManager.finishCapture()
+        }
     }
 
     companion object {

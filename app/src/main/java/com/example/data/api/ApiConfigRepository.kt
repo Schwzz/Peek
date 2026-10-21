@@ -4,11 +4,13 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.example.BuildConfig
 import com.example.util.KeystoreCrypto
+import com.example.util.KeyCipher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-class ApiConfigRepository(context: Context) {
+class ApiConfigRepository(context: Context, private val cipher: KeyCipher = KeystoreCrypto) {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences("peek_api_prefs", Context.MODE_PRIVATE)
 
@@ -34,26 +36,59 @@ class ApiConfigRepository(context: Context) {
         return getEffectiveApiKey(config).isNotBlank()
     }
 
+    fun getConfig(provider: VisionAiProvider): ApiConfig = loadProviderConfig(provider)
+
     fun saveConfig(newConfig: ApiConfig) {
-        val encryptedKey = KeystoreCrypto.encrypt(newConfig.apiKey)
-        prefs.edit().apply {
-            putString("provider", newConfig.provider.name)
-            putString("api_key", encryptedKey)
-            putString("base_url", newConfig.baseUrl)
-            putString("model_name", newConfig.modelName)
-            apply()
+        require(newConfig.modelName.isNotBlank() && newConfig.modelName != "custom") { "Enter a model name." }
+        if (newConfig.provider.supportsCustomUrl) {
+            val url = newConfig.baseUrl.trim().toHttpUrlOrNull()
+            require(url != null && url.isHttps) { "Enter a valid HTTPS API endpoint." }
         }
-        _configFlow.value = newConfig
+        val encryptedKey = cipher.encrypt(newConfig.apiKey.trim())
+        val prefix = newConfig.provider.name.lowercase()
+        val legacyProvider = runCatching {
+            VisionAiProvider.valueOf(prefs.getString("provider", VisionAiProvider.GEMINI.name)!!)
+        }.getOrDefault(VisionAiProvider.GEMINI)
+        val legacyConfig = if (prefs.contains("api_key") && legacyProvider != newConfig.provider)
+            loadProviderConfig(legacyProvider) else null
+        val legacyEncryptedKey = legacyConfig?.let { cipher.encrypt(it.apiKey) }
+        prefs.edit().apply {
+            if (legacyConfig != null) {
+                val legacyPrefix = legacyProvider.name.lowercase()
+                putString("${legacyPrefix}_api_key", legacyEncryptedKey)
+                putString("${legacyPrefix}_base_url", legacyConfig.baseUrl)
+                putString("${legacyPrefix}_model_name", legacyConfig.modelName)
+            }
+            putString("provider", newConfig.provider.name)
+            putString("${prefix}_api_key", encryptedKey)
+            putString("${prefix}_base_url", newConfig.baseUrl.trim())
+            putString("${prefix}_model_name", newConfig.modelName.trim())
+            remove("api_key")
+            remove("base_url")
+            remove("model_name")
+            check(commit()) { "Could not save settings. Please try again." }
+        }
+        _configFlow.value = newConfig.copy(apiKey = newConfig.apiKey.trim(), baseUrl = newConfig.baseUrl.trim(), modelName = newConfig.modelName.trim())
     }
 
     private fun loadConfig(): ApiConfig {
         val providerStr = prefs.getString("provider", VisionAiProvider.GEMINI.name)
         val provider = runCatching { VisionAiProvider.valueOf(providerStr!!) }.getOrDefault(VisionAiProvider.GEMINI)
-        val storedApiKey = prefs.getString("api_key", "") ?: ""
-        val decryptedApiKey = KeystoreCrypto.decrypt(storedApiKey)
-        val baseUrl = prefs.getString("base_url", VisionAiProvider.OPENAI_COMPATIBLE.defaultBaseUrl) ?: VisionAiProvider.OPENAI_COMPATIBLE.defaultBaseUrl
+        return loadProviderConfig(provider)
+    }
+
+    private fun loadProviderConfig(provider: VisionAiProvider): ApiConfig {
+        val prefix = provider.name.lowercase()
+        // Legacy fields belong only to the provider selected when they were saved.
+        val legacy = prefs.getString("provider", VisionAiProvider.GEMINI.name) == provider.name
+        val storedApiKey = prefs.getString("${prefix}_api_key", null)
+            ?: if (legacy) prefs.getString("api_key", "").orEmpty() else ""
+        val decryptedApiKey = cipher.decrypt(storedApiKey)
+        val baseUrl = prefs.getString("${prefix}_base_url", null)
+            ?: if (legacy) prefs.getString("base_url", provider.defaultBaseUrl).orEmpty() else provider.defaultBaseUrl
         val defaultModel = provider.defaultModel
-        val modelName = prefs.getString("model_name", defaultModel) ?: defaultModel
+        val modelName = prefs.getString("${prefix}_model_name", null)
+            ?: if (legacy) prefs.getString("model_name", defaultModel).orEmpty() else defaultModel
 
         return ApiConfig(
             provider = provider,

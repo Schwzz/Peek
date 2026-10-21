@@ -13,5 +13,7 @@ data class ChatMessage(
     val text: String,
     val timestamp: Long = System.currentTimeMillis(),
     val isError: Boolean = false,
-    val hasImageAttachment: Boolean = false
+    val hasImageAttachment: Boolean = false,
+    val imageBase64: String? = null,
+    val isCancelled: Boolean = false
 )

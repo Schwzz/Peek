@@ -1,9 +1,8 @@
 package com.example.data.api
 
-import android.graphics.Bitmap
 import com.example.model.ChatMessage
 import com.example.model.MessageSender
-import com.example.util.BitmapUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -23,7 +22,7 @@ class GeminiVisionService(
 ) : VisionAiService {
 
     override suspend fun analyze(
-        bitmap: Bitmap?,
+        imageBase64: String?,
         prompt: String,
         history: List<ChatMessage>,
         config: ApiConfig,
@@ -37,12 +36,12 @@ class GeminiVisionService(
             }
 
             val model = config.modelName.ifBlank { VisionAiProvider.GEMINI.defaultModel }
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
 
             val contentsArray = JSONArray()
 
             // Include prior chat history turns if multi-turn
-            val recentHistory = history.takeLast(6)
+            val recentHistory = history.filterNot { it.isError || it.isCancelled }.takeLast(6)
             for (msg in recentHistory) {
                 if (msg.isError) continue
                 val contentObj = JSONObject()
@@ -50,6 +49,10 @@ class GeminiVisionService(
                 val partsArray = JSONArray()
                 val textPart = JSONObject().put("text", msg.text)
                 partsArray.put(textPart)
+                msg.imageBase64?.let { encoded ->
+                    partsArray.put(JSONObject().put("inlineData", JSONObject()
+                        .put("mimeType", "image/jpeg").put("data", encoded)))
+                }
                 contentObj.put("parts", partsArray)
                 contentsArray.put(contentObj)
             }
@@ -62,8 +65,8 @@ class GeminiVisionService(
             val textPrompt = prompt.ifBlank { "Describe what is shown in this image and highlight any key details." }
             currentParts.put(JSONObject().put("text", textPrompt))
 
-            if (bitmap != null) {
-                val base64Image = BitmapUtils.toBase64Jpeg(bitmap)
+            if (imageBase64 != null) {
+                val base64Image = imageBase64
                 val inlineData = JSONObject().apply {
                     put("mimeType", "image/jpeg")
                     put("data", base64Image)
@@ -82,17 +85,17 @@ class GeminiVisionService(
 
             val request = Request.Builder()
                 .url(url)
+                .header("x-goog-api-key", apiKey)
                 .post(requestBody)
                 .build()
 
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string().orEmpty()
+            val (responseCode, responseBody) = client.newCall(request).readResponse()
 
-            if (!response.isSuccessful) {
+            if (responseCode !in 200..299) {
                 val parsedError = runCatching {
                     val errObj = JSONObject(responseBody).optJSONObject("error")
-                    errObj?.optString("message") ?: "HTTP ${response.code}: ${response.message}"
-                }.getOrDefault("HTTP ${response.code}: $responseBody")
+                    errObj?.optString("message") ?: "HTTP $responseCode"
+                }.getOrDefault("HTTP $responseCode")
                 return@withContext Result.failure(Exception("Gemini API Error: $parsedError"))
             }
 
@@ -127,6 +130,8 @@ class GeminiVisionService(
             } else {
                 Result.success(finalOutput)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }

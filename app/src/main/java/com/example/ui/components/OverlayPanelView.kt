@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -619,11 +620,10 @@ fun OverlayPanelView(
 
                 IconButton(
                     onClick = {
-                        val promptToSend = inputPrompt
-                        inputPrompt = ""
-                        OverlayStateManager.sendPrompt(promptToSend, context)
+                        if (isLoading) OverlayStateManager.cancelRequest()
+                        else if (OverlayStateManager.sendPrompt(inputPrompt, context)) inputPrompt = ""
                     },
-                    enabled = !isLoading && (inputPrompt.isNotBlank() || currentImage != null),
+                    enabled = isLoading || inputPrompt.isNotBlank() || currentImage != null,
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
@@ -633,8 +633,8 @@ fun OverlayPanelView(
                         .testTag("overlay_send_button")
                 ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
+                        imageVector = if (isLoading) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
+                        contentDescription = if (isLoading) "Stop generating" else "Send",
                         tint = if (!isLoading && (inputPrompt.isNotBlank() || currentImage != null)) Color(0xFF00363F) else Color(0xFF94A3B8),
                         modifier = Modifier.size(18.dp)
                     )

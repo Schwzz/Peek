@@ -1,16 +1,15 @@
 package com.example.data.api
 
 import android.content.Context
-import android.graphics.Bitmap
 import com.example.model.ChatMessage
 
-class VisionAiRepository(private val context: Context) {
+class VisionAiRepository(context: Context) {
     private val configRepository = ApiConfigRepository.getInstance(context)
     private val geminiService = GeminiVisionService()
     private val openAiService = OpenAiVisionService()
 
     suspend fun analyzeImage(
-        bitmap: Bitmap?,
+        imageBase64: String?,
         prompt: String,
         history: List<ChatMessage>
     ): Result<String> {
@@ -24,8 +23,8 @@ class VisionAiRepository(private val context: Context) {
         }
 
         return when (config.provider) {
-            VisionAiProvider.GEMINI -> geminiService.analyze(bitmap, prompt, history, config, apiKey)
-            VisionAiProvider.OPENAI_COMPATIBLE -> openAiService.analyze(bitmap, prompt, history, config, apiKey)
+            VisionAiProvider.GEMINI -> geminiService.analyze(imageBase64, prompt, history, config, apiKey)
+            VisionAiProvider.OPENAI_COMPATIBLE -> openAiService.analyze(imageBase64, prompt, history, config, apiKey)
         }
     }
 
@@ -48,7 +47,7 @@ class VisionAiRepository(private val context: Context) {
 
         fun getInstance(context: Context): VisionAiRepository {
             return instance ?: synchronized(this) {
-                instance ?: VisionAiRepository(context).also { instance = it }
+                instance ?: VisionAiRepository(context.applicationContext).also { instance = it }
             }
         }
     }

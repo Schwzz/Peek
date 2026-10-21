@@ -68,10 +68,10 @@ fun ScreenSelectorView(
         val screenHeightPx = constraints.maxHeight.toFloat()
 
         // Initial selection centered in middle third of screen
-        var rectLeft by remember { mutableStateOf(screenWidthPx * 0.15f) }
-        var rectTop by remember { mutableStateOf(screenHeightPx * 0.30f) }
-        var rectRight by remember { mutableStateOf(screenWidthPx * 0.85f) }
-        var rectBottom by remember { mutableStateOf(screenHeightPx * 0.65f) }
+        var rectLeft by remember(screenWidthPx, screenHeightPx) { mutableStateOf(screenWidthPx * 0.15f) }
+        var rectTop by remember(screenWidthPx, screenHeightPx) { mutableStateOf(screenHeightPx * 0.30f) }
+        var rectRight by remember(screenWidthPx, screenHeightPx) { mutableStateOf(screenWidthPx * 0.85f) }
+        var rectBottom by remember(screenWidthPx, screenHeightPx) { mutableStateOf(screenHeightPx * 0.65f) }
 
         var dragMode by remember { mutableStateOf<DragMode?>(null) }
         val handleRadius = 36f
@@ -81,7 +81,7 @@ fun ScreenSelectorView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
+                .pointerInput(screenWidthPx, screenHeightPx) {
                     detectDragGestures(
                         onDragStart = { offset ->
                             val l = min(rectLeft, rectRight)
@@ -134,20 +134,20 @@ fun ScreenSelectorView(
                                     rectBottom = newTop + height
                                 }
                                 DragMode.TOP_LEFT -> {
-                                    rectLeft = (rectLeft + dragAmount.x).coerceIn(0f, rectRight - 40f)
-                                    rectTop = (rectTop + dragAmount.y).coerceIn(0f, rectBottom - 40f)
+                                    rectLeft = (rectLeft + dragAmount.x).coerceIn(0f, (rectRight - 40f).coerceAtLeast(0f))
+                                    rectTop = (rectTop + dragAmount.y).coerceIn(0f, (rectBottom - 40f).coerceAtLeast(0f))
                                 }
                                 DragMode.TOP_RIGHT -> {
-                                    rectRight = (rectRight + dragAmount.x).coerceIn(rectLeft + 40f, screenWidthPx)
-                                    rectTop = (rectTop + dragAmount.y).coerceIn(0f, rectBottom - 40f)
+                                    rectRight = (rectRight + dragAmount.x).coerceIn((rectLeft + 40f).coerceAtMost(screenWidthPx), screenWidthPx)
+                                    rectTop = (rectTop + dragAmount.y).coerceIn(0f, (rectBottom - 40f).coerceAtLeast(0f))
                                 }
                                 DragMode.BOTTOM_LEFT -> {
-                                    rectLeft = (rectLeft + dragAmount.x).coerceIn(0f, rectRight - 40f)
-                                    rectBottom = (rectBottom + dragAmount.y).coerceIn(rectTop + 40f, screenHeightPx)
+                                    rectLeft = (rectLeft + dragAmount.x).coerceIn(0f, (rectRight - 40f).coerceAtLeast(0f))
+                                    rectBottom = (rectBottom + dragAmount.y).coerceIn((rectTop + 40f).coerceAtMost(screenHeightPx), screenHeightPx)
                                 }
                                 DragMode.BOTTOM_RIGHT -> {
-                                    rectRight = (rectRight + dragAmount.x).coerceIn(rectLeft + 40f, screenWidthPx)
-                                    rectBottom = (rectBottom + dragAmount.y).coerceIn(rectTop + 40f, screenHeightPx)
+                                    rectRight = (rectRight + dragAmount.x).coerceIn((rectLeft + 40f).coerceAtMost(screenWidthPx), screenWidthPx)
+                                    rectBottom = (rectBottom + dragAmount.y).coerceIn((rectTop + 40f).coerceAtMost(screenHeightPx), screenHeightPx)
                                 }
                                 DragMode.NEW -> {
                                     rectRight = change.position.x.coerceIn(0f, screenWidthPx)
@@ -343,6 +343,7 @@ fun ScreenSelectorView(
                             onSelectionConfirmed(cropRect)
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CyanPrimary),
+                        enabled = kotlin.math.abs(rectRight - rectLeft) >= 40f && kotlin.math.abs(rectBottom - rectTop) >= 40f,
                         modifier = Modifier
                             .weight(1.5f)
                             .testTag("confirm_crop_button")

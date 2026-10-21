@@ -2,12 +2,19 @@ package com.example.service
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.net.Uri
+import com.example.util.ImageLoader
 import com.example.data.api.VisionAiRepository
 import com.example.model.ChatMessage
 import com.example.model.MessageSender
+import com.example.util.BitmapUtils
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +28,21 @@ object OverlayStateManager {
 
     private val _isPanelExpanded = MutableStateFlow(false)
     val isPanelExpanded: StateFlow<Boolean> = _isPanelExpanded.asStateFlow()
+
+    private val _isCapturing = MutableStateFlow(false)
+    val isCapturing: StateFlow<Boolean> = _isCapturing.asStateFlow()
+
+    fun beginCapture(): Boolean {
+        if (_isCapturing.value) return false
+        _isCapturing.value = true
+        return true
+    }
+
+    fun finishCapture() {
+        _capturedScreenToCrop.value = null
+        _isPanelExpanded.value = true
+        _isCapturing.value = false
+    }
 
     private val _currentImage = MutableStateFlow<Bitmap?>(null)
     val currentImage: StateFlow<Bitmap?> = _currentImage.asStateFlow()
@@ -65,11 +87,13 @@ object OverlayStateManager {
     }
 
     fun clearImage() {
+        imageLoad?.cancel()
         _currentImage.value = null
         _statusMessage.value = "Image removed."
     }
 
     fun clearChat() {
+        cancelRequest()
         _chatMessages.value = emptyList()
         _errorMessage.value = null
         _statusMessage.value = "Chat reset."
@@ -84,8 +108,49 @@ object OverlayStateManager {
     }
 
     private val requestLock = Any()
+    private var activeRequest: Job? = null
+    private var activeUserMessageId: String? = null
+    private var requestVersion = 0L
+    private var imageLoad: Job? = null
+
+    fun loadImage(context: Context, uri: Uri) {
+        imageLoad?.cancel()
+        val appContext = context.applicationContext
+        _statusMessage.value = "Loading image..."
+        imageLoad = scope.launch {
+            try {
+                setCurrentImage(ImageLoader.decode(appContext, uri))
+                setPanelExpanded(true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                setErrorMessage("Failed to load image: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    fun cancelRequest() = synchronized(requestLock) {
+        requestVersion++
+        activeRequest?.cancel()
+        activeRequest = null
+        val pendingId = activeUserMessageId
+        _chatMessages.value = _chatMessages.value.map {
+            if (it.id == pendingId) it.copy(isCancelled = true) else it
+        }
+        activeUserMessageId = null
+        _isLoading.value = false
+        _statusMessage.value = "Request stopped."
+    }
 
     fun sendPrompt(prompt: String, context: Context): Boolean {
+        val repository = VisionAiRepository.getInstance(context.applicationContext)
+        return sendPrompt(prompt) { image, text, history -> repository.analyzeImage(image, text, history) }
+    }
+
+    internal fun sendPrompt(
+        prompt: String,
+        analyze: suspend (String?, String, List<ChatMessage>) -> Result<String>
+    ): Boolean {
         synchronized(requestLock) {
             if (_isLoading.value) {
                 return false
@@ -106,19 +171,23 @@ object OverlayStateManager {
                 hasImageAttachment = image != null
             )
 
-            _chatMessages.value = _chatMessages.value + userMessage
+            val history = _chatMessages.value.toList()
+            val version = ++requestVersion
+            activeUserMessageId = userMessage.id
+            _chatMessages.value = (_chatMessages.value + userMessage).takeLast(60)
             _isLoading.value = true
             _errorMessage.value = null
             _statusMessage.value = "Peek is analyzing with AI..."
 
-            scope.launch {
+            activeRequest = scope.launch(start = CoroutineStart.LAZY) {
                 try {
-                    val repository = VisionAiRepository.getInstance(context)
-                    val result = repository.analyzeImage(
-                        bitmap = image,
-                        prompt = displayPrompt,
-                        history = _chatMessages.value.dropLast(1)
-                    )
+                    val encoded = if (image == null) null else withContext(Dispatchers.Default) { BitmapUtils.toBase64Jpeg(image) }
+                    if (version != requestVersion) return@launch
+                    _chatMessages.value = _chatMessages.value.map {
+                        if (it.id == userMessage.id) it.copy(imageBase64 = encoded) else it
+                    }
+                    val result = analyze(encoded, displayPrompt, history)
+                    if (version != requestVersion) return@launch
 
                     result.onSuccess { aiResponse ->
                         val aiMessage = ChatMessage(
@@ -137,12 +206,24 @@ object OverlayStateManager {
                         )
                         _statusMessage.value = "Error occurred."
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (version == requestVersion) {
+                        _errorMessage.value = e.localizedMessage ?: "Request failed. Please try again."
+                        _statusMessage.value = "Error occurred."
+                    }
                 } finally {
                     synchronized(requestLock) {
-                        _isLoading.value = false
+                        if (version == requestVersion) {
+                            _isLoading.value = false
+                            activeRequest = null
+                            activeUserMessageId = null
+                        }
                     }
                 }
             }
+            activeRequest?.start()
             return true
         }
     }

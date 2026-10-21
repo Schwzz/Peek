@@ -1,9 +1,8 @@
 package com.example.data.api
 
-import android.graphics.Bitmap
 import com.example.model.ChatMessage
 import com.example.model.MessageSender
-import com.example.util.BitmapUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -23,7 +22,7 @@ class OpenAiVisionService(
 ) : VisionAiService {
 
     override suspend fun analyze(
-        bitmap: Bitmap?,
+        imageBase64: String?,
         prompt: String,
         history: List<ChatMessage>,
         config: ApiConfig,
@@ -52,12 +51,19 @@ class OpenAiVisionService(
             val messagesArray = JSONArray()
 
             // Include prior chat history
-            val recentHistory = history.takeLast(6)
+            val recentHistory = history.filterNot { it.isError || it.isCancelled }.takeLast(6)
             for (msg in recentHistory) {
                 if (msg.isError) continue
                 val msgObj = JSONObject()
                 msgObj.put("role", if (msg.sender == MessageSender.USER) "user" else "assistant")
-                msgObj.put("content", msg.text)
+                if (msg.imageBase64 != null) {
+                    msgObj.put("content", JSONArray()
+                        .put(JSONObject().put("type", "text").put("text", msg.text))
+                        .put(JSONObject().put("type", "image_url").put("image_url",
+                            JSONObject().put("url", "data:image/jpeg;base64,${msg.imageBase64}"))))
+                } else {
+                    msgObj.put("content", msg.text)
+                }
                 messagesArray.put(msgObj)
             }
 
@@ -72,8 +78,8 @@ class OpenAiVisionService(
                 put("text", textPrompt)
             })
 
-            if (bitmap != null) {
-                val base64 = BitmapUtils.toBase64Jpeg(bitmap)
+            if (imageBase64 != null) {
+                val base64 = imageBase64
                 contentArray.put(JSONObject().apply {
                     put("type", "image_url")
                     put("image_url", JSONObject().apply {
@@ -98,14 +104,13 @@ class OpenAiVisionService(
                 .post(requestBody)
                 .build()
 
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string().orEmpty()
+            val (responseCode, responseBody) = client.newCall(request).readResponse()
 
-            if (!response.isSuccessful) {
+            if (responseCode !in 200..299) {
                 val parsedError = runCatching {
                     val errObj = JSONObject(responseBody).optJSONObject("error")
-                    errObj?.optString("message") ?: "HTTP ${response.code}: ${response.message}"
-                }.getOrDefault("HTTP ${response.code}: $responseBody")
+                    errObj?.optString("message") ?: "HTTP $responseCode"
+                }.getOrDefault("HTTP $responseCode")
                 return@withContext Result.failure(Exception("API Error: $parsedError"))
             }
 
@@ -124,6 +129,8 @@ class OpenAiVisionService(
             } else {
                 Result.success(content)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }

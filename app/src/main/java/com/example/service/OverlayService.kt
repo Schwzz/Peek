@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.onEach
 import kotlin.math.abs
 
@@ -78,11 +79,12 @@ class OverlayService : Service() {
 
         lifecycleOwner = ServiceLifecycleOwner().apply { onCreate() }
 
-        OverlayStateManager.setServiceRunning(true)
-
         if (Settings.canDrawOverlays(this)) {
             setupViews()
             observeState()
+        } else {
+            OverlayStateManager.setErrorMessage("Display over other apps permission is required.")
+            stopSelf()
         }
     }
 
@@ -188,7 +190,12 @@ class OverlayService : Service() {
             }
         }
 
-        runCatching { windowManager.addView(bubbleView, bubbleParams) }
+        runCatching { windowManager.addView(bubbleView, bubbleParams) }.onFailure {
+            OverlayStateManager.setErrorMessage("Could not show Peek overlay: ${it.localizedMessage}")
+            stopSelf()
+            return
+        }
+        OverlayStateManager.setServiceRunning(true)
 
         // 2. Setup Overlay Panel - bound strictly to the panel's dimensions so taps outside reach underlying app
         val displayMetrics = resources.displayMetrics
@@ -259,14 +266,24 @@ class OverlayService : Service() {
     }
 
     private fun observeState() {
-        OverlayStateManager.isPanelExpanded.onEach { expanded ->
+        combine(OverlayStateManager.isPanelExpanded, OverlayStateManager.isCapturing) { expanded, capturing ->
+            expanded to capturing
+        }.onEach { (expanded, capturing) ->
+            if (capturing) {
+                if (bubbleView?.isAttachedToWindow == true) runCatching { windowManager.removeView(bubbleView) }
+                if (panelView?.isAttachedToWindow == true) runCatching { windowManager.removeView(panelView) }
+                return@onEach
+            }
             if (expanded) {
                 // Show panel, hide bubble
                 if (bubbleView?.isAttachedToWindow == true) {
                     runCatching { windowManager.removeView(bubbleView) }
                 }
                 if (panelView?.isAttachedToWindow == false) {
-                    runCatching { windowManager.addView(panelView, panelParams) }
+                    runCatching { windowManager.addView(panelView, panelParams) }.onFailure {
+                        OverlayStateManager.setErrorMessage("Could not display Peek. Check overlay permission.")
+                        stopSelf()
+                    }
                 }
             } else {
                 // Show bubble, hide panel
@@ -274,7 +291,10 @@ class OverlayService : Service() {
                     runCatching { windowManager.removeView(panelView) }
                 }
                 if (bubbleView?.isAttachedToWindow == false) {
-                    runCatching { windowManager.addView(bubbleView, bubbleParams) }
+                    runCatching { windowManager.addView(bubbleView, bubbleParams) }.onFailure {
+                        OverlayStateManager.setErrorMessage("Could not display Peek. Check overlay permission.")
+                        stopSelf()
+                    }
                 }
             }
         }.launchIn(scope)
@@ -331,6 +351,7 @@ class OverlayService : Service() {
         super.onDestroy()
         OverlayStateManager.setServiceRunning(false)
         OverlayStateManager.setPanelExpanded(false)
+        OverlayStateManager.cancelRequest()
 
         scope.cancel()
         lifecycleOwner?.onDestroy()

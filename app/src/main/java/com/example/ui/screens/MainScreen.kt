@@ -62,6 +62,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -111,9 +115,19 @@ fun MainScreen(
 
     var showInAppPlayground by remember { mutableStateOf(false) }
 
-    // Check permission whenever resumed
-    LaunchedEffect(Unit) {
-        hasOverlayPermission = Settings.canDrawOverlays(context)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasOverlayPermission = Settings.canDrawOverlays(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val selectedImage by OverlayStateManager.currentImage.collectAsState()
+    LaunchedEffect(selectedImage, isServiceRunning) {
+        if (selectedImage != null && !isServiceRunning) showInAppPlayground = true
     }
 
     // Photo picker launcher
@@ -121,23 +135,8 @@ fun MainScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
-            runCatching {
-                val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    val source = ImageDecoder.createSource(context.contentResolver, uri)
-                    ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
-                        decoder.isMutableRequired = true
-                    }
-                } else {
-                    @Suppress("DEPRECATION")
-                    MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
-                }
-                OverlayStateManager.setCurrentImage(bitmap)
-                OverlayStateManager.setPanelExpanded(true)
-                showInAppPlayground = true
-                Toast.makeText(context, "Image loaded into Peek overlay", Toast.LENGTH_SHORT).show()
-            }.onFailure {
-                OverlayStateManager.setErrorMessage("Failed to load image: ${it.message}")
-            }
+            OverlayStateManager.loadImage(context, uri)
+            showInAppPlayground = true
         }
     }
 
@@ -406,10 +405,8 @@ fun MainScreen(
                     } else {
                         if (isServiceRunning) {
                             OverlayService.stop(context)
-                            OverlayStateManager.setServiceRunning(false)
                         } else {
                             OverlayService.start(context)
-                            OverlayStateManager.setServiceRunning(true)
                             Toast.makeText(context, "Peek floating bubble summoned!", Toast.LENGTH_SHORT).show()
                         }
                     }

@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import com.example.service.OverlayStateManager
@@ -19,6 +20,10 @@ class ScreenSelectorActivity : ComponentActivity() {
 
         setContent {
             PeekTheme {
+                BackHandler {
+                    OverlayStateManager.finishCapture()
+                    finish()
+                }
                 val capturedBitmap by OverlayStateManager.capturedScreenToCrop.collectAsState()
 
                 if (capturedBitmap != null) {
@@ -27,13 +32,11 @@ class ScreenSelectorActivity : ComponentActivity() {
                         onSelectionConfirmed = { cropRect ->
                             val cropped = BitmapUtils.crop(capturedBitmap!!, cropRect)
                             OverlayStateManager.setCurrentImage(cropped)
-                            OverlayStateManager.setCapturedScreenToCrop(null)
-                            OverlayStateManager.setPanelExpanded(true)
+                            OverlayStateManager.finishCapture()
                             finish()
                         },
                         onCancel = {
-                            OverlayStateManager.setCapturedScreenToCrop(null)
-                            OverlayStateManager.setPanelExpanded(true)
+                            OverlayStateManager.finishCapture()
                             finish()
                         }
                     )
@@ -45,6 +48,7 @@ class ScreenSelectorActivity : ComponentActivity() {
     }
 
     override fun finish() {
+        OverlayStateManager.finishCapture()
         super.finish()
         overridePendingTransition(0, 0)
     }

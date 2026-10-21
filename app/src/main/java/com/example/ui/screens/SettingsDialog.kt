@@ -90,6 +90,7 @@ fun SettingsDialog(
     var isTestingConnection by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var isTestSuccess by remember { mutableStateOf(false) }
+    val drafts = remember { mutableMapOf(initialConfig.provider to initialConfig) }
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -170,11 +171,13 @@ fun SettingsDialog(
                             modifier = Modifier
                                 .weight(1f)
                                 .clickable {
+                                    drafts[selectedProvider] = ApiConfig(selectedProvider, apiKey, baseUrl, modelName)
+                                    val next = drafts[provider] ?: configRepo.getConfig(provider)
                                     selectedProvider = provider
-                                    modelName = provider.defaultModel
-                                    if (provider == VisionAiProvider.OPENAI_COMPATIBLE && baseUrl.isBlank()) {
-                                        baseUrl = provider.defaultBaseUrl
-                                    }
+                                    apiKey = next.apiKey
+                                    modelName = next.modelName
+                                    baseUrl = next.baseUrl
+                                    testResult = null
                                 }
                                 .testTag("provider_${provider.name.lowercase()}_tab")
                         ) {
@@ -240,7 +243,7 @@ fun SettingsDialog(
                             DropdownMenuItem(
                                 text = { Text(model, color = Color.White, fontSize = 13.sp) },
                                 onClick = {
-                                    modelName = model
+                                    modelName = if (model == "custom") "" else model
                                     isModelDropdownExpanded = false
                                 }
                             )
@@ -442,9 +445,14 @@ fun SettingsDialog(
                                 baseUrl = baseUrl,
                                 modelName = modelName
                             )
-                            configRepo.saveConfig(newConfig)
-                            Toast.makeText(context, "Settings saved successfully", Toast.LENGTH_SHORT).show()
-                            onDismiss()
+                            runCatching { configRepo.saveConfig(newConfig) }
+                                .onSuccess {
+                                    Toast.makeText(context, "Settings saved successfully", Toast.LENGTH_SHORT).show()
+                                    onDismiss()
+                                }.onFailure {
+                                    isTestSuccess = false
+                                    testResult = it.localizedMessage ?: "Could not securely save settings."
+                                }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CyanPrimary),
                         modifier = Modifier

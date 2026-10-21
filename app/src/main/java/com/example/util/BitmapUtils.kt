@@ -14,6 +14,7 @@ object BitmapUtils {
         val outputStream = ByteArrayOutputStream()
         scaled.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
         val byteArray = outputStream.toByteArray()
+        if (scaled !== source) scaled.recycle()
         return Base64.encodeToString(byteArray, Base64.NO_WRAP)
     }
 

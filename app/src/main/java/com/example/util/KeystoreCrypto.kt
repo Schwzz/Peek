@@ -9,7 +9,12 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-object KeystoreCrypto {
+interface KeyCipher {
+    fun encrypt(plainText: String): String
+    fun decrypt(encryptedText: String): String
+}
+
+object KeystoreCrypto : KeyCipher {
 
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val KEY_ALIAS = "peek_master_key_v1"
@@ -51,7 +56,7 @@ object KeystoreCrypto {
         return key
     }
 
-    fun encrypt(plainText: String): String {
+    override fun encrypt(plainText: String): String {
         if (plainText.isEmpty()) return ""
         return runCatching {
             val secretKey = getSecretKey()
@@ -66,12 +71,11 @@ object KeystoreCrypto {
 
             PREFIX + Base64.encodeToString(combined, Base64.NO_WRAP)
         }.getOrElse {
-            // Safe fallback for environments without AndroidKeyStore (e.g. host JVM unit tests)
-            plainText
+            throw IllegalStateException("Could not securely save the API key. Please try again.", it)
         }
     }
 
-    fun decrypt(encryptedText: String): String {
+    override fun decrypt(encryptedText: String): String {
         if (encryptedText.isEmpty()) return ""
         if (!encryptedText.startsWith(PREFIX)) {
             // Legacy or plain text
