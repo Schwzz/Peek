@@ -142,7 +142,7 @@ fun OverlayPanelView(
                         }
                     }
                 }
-                if (!compact && (messages.isEmpty() || currentImage != null)) {
+                if (!compact && messages.isEmpty()) {
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         for (suggestion in listOf("Explain this", "Extract text", "Summarize", "Translate", "What is this error?", "Solve step-by-step")) {
                             SuggestionChip(onClick = {
@@ -173,7 +173,7 @@ fun OverlayPanelView(
                         Icon(if (loading) Icons.Default.StopCircle else Icons.AutoMirrored.Filled.Send, if (loading) "Stop generating" else "Send question", tint = CyanPrimary)
                     }
                 }
-                if (!compact && status != null && !loading && error == null) Text(status.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                if (!compact && messages.isEmpty() && status != null && !loading && error == null) Text(status.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
             if (isFloating && !tiny) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {

@@ -1,6 +1,8 @@
 package com.example
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
@@ -8,7 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import com.example.service.OverlayStateManager
 import com.example.ui.components.MarkdownText
 import com.example.ui.components.OverlayPanelView
@@ -26,7 +28,7 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class UiReworkTest {
-    @get:Rule val ui = createComposeRule()
+    @get:Rule val ui = createAndroidComposeRule<ComponentActivity>()
     @Before fun reset() {
         OverlayStateManager.clearChat()
         OverlayStateManager.clearImage()
@@ -36,7 +38,14 @@ class UiReworkTest {
     private fun screenshot(name: String) {
         ui.waitForIdle()
         val file = File("build/reports/ui/$name.png").apply { parentFile.mkdirs() }
-        file.outputStream().use { ui.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it) }
+        // Draw on the UI thread: Robolectric has no live compositor for PixelCopy.
+        ui.runOnIdle {
+            val view = ui.activity.window.decorView
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            view.draw(Canvas(bitmap))
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+        }
     }
 
     @Test fun homeAndChatPreserveUnsentDraft() {

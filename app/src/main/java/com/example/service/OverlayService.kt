@@ -160,7 +160,7 @@ class OverlayService : Service() {
         // 2. Setup Overlay Panel - bound strictly to the panel's dimensions so taps outside reach underlying app
         val displayMetrics = resources.displayMetrics
         val panelWidth = (layoutPrefs.getFloat("panel_width_dp", 380f) * displayMetrics.density).toInt()
-        val panelHeight = (layoutPrefs.getFloat("panel_height_dp", 560f) * displayMetrics.density).toInt()
+        val panelHeight = (layoutPrefs.getFloat("panel_height_dp", 640f) * displayMetrics.density).toInt()
         preferredPanel = OverlayGeometry.clampPanel(PanelBounds(
             (layoutPrefs.getFloat("panel_x", 0.04f) * displayMetrics.widthPixels).toInt(),
             (layoutPrefs.getFloat("panel_y", 0.10f) * displayMetrics.heightPixels).toInt(),

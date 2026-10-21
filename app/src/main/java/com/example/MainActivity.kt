@@ -45,6 +45,8 @@ class MainActivity : ComponentActivity() {
                 ) { uri: Uri? ->
                     if (uri != null) {
                         OverlayStateManager.loadImage(applicationContext, uri)
+                    } else if (OverlayStateManager.isServiceRunning.value) {
+                        OverlayStateManager.setPanelExpanded(true)
                     }
                 }
 
