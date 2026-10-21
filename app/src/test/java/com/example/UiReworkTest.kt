@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -92,5 +93,17 @@ class UiReworkTest {
         ui.onNodeWithTag("overlay_resize_handle").performTouchInput { swipeLeft() }
         ui.runOnIdle { Assert.assertTrue(movement > 0f); Assert.assertTrue(resized < 0f) }
         screenshot("overlay")
+    }
+
+    @Test fun smallOverlayKeepsTheComposerVisible() {
+        ui.setContent { PeekTheme { androidx.compose.foundation.layout.Box(Modifier.height(200.dp)) {
+            OverlayPanelView(
+                modifier = Modifier.fillMaxSize(), onCaptureScreenRequested = {}, onPickImageRequested = {},
+                onMinimizeRequested = {}, onCloseRequested = {}, onOpenSettingsRequested = {}
+            )
+        } } }
+        ui.onNodeWithTag("overlay_prompt_input").assertIsDisplayed()
+        ui.onNodeWithTag("overlay_send_button").assertIsDisplayed()
+        screenshot("compact-overlay")
     }
 }

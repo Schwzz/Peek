@@ -97,6 +97,10 @@ fun ScreenSelectorView(
                             val r = max(rectLeft, rectRight)
                             val t = min(rectTop, rectBottom)
                             val b = max(rectTop, rectBottom)
+                            rectLeft = l.coerceIn(0f, screenWidthPx)
+                            rectRight = r.coerceIn(rectLeft, screenWidthPx)
+                            rectTop = t.coerceIn(0f, screenHeightPx)
+                            rectBottom = b.coerceIn(rectTop, screenHeightPx)
 
                             dragMode = when {
                                 (offset - Offset(l, t)).getDistance() <= handleRadius * 1.5f -> DragMode.TOP_LEFT
@@ -106,10 +110,10 @@ fun ScreenSelectorView(
                                 offset.x in l..r && offset.y in t..b -> DragMode.MOVE
                                 else -> {
                                     // Start drawing a new rectangle
-                                    rectLeft = offset.x
-                                    rectTop = offset.y
-                                    rectRight = offset.x
-                                    rectBottom = offset.y
+                                    rectLeft = offset.x.coerceIn(0f, screenWidthPx)
+                                    rectTop = offset.y.coerceIn(0f, screenHeightPx)
+                                    rectRight = rectLeft
+                                    rectBottom = rectTop
                                     DragMode.NEW
                                 }
                             }
