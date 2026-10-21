@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import android.os.Bundle
+import android.content.Context
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,6 +15,20 @@ import com.example.ui.theme.PeekTheme
 import com.example.util.BitmapUtils
 
 class ScreenSelectorActivity : ComponentActivity() {
+
+    companion object {
+        fun cropCurrentImage(context: Context) {
+            val image = OverlayStateManager.currentImage.value ?: return
+            if (!OverlayStateManager.beginCapture()) return
+            OverlayStateManager.setCapturedScreenToCrop(image)
+            runCatching {
+                context.startActivity(Intent(context, ScreenSelectorActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }.onFailure {
+                OverlayStateManager.finishCapture()
+                OverlayStateManager.setErrorMessage("Could not open crop editor: ${it.localizedMessage}")
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

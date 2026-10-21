@@ -62,6 +62,10 @@ object OverlayStateManager {
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    private val _draftPrompt = MutableStateFlow("")
+    val draftPrompt: StateFlow<String> = _draftPrompt.asStateFlow()
+    fun setDraftPrompt(text: String) { _draftPrompt.value = text }
+
     fun setServiceRunning(running: Boolean) {
         _isServiceRunning.value = running
     }
@@ -95,6 +99,7 @@ object OverlayStateManager {
     fun clearChat() {
         cancelRequest()
         _chatMessages.value = emptyList()
+        _draftPrompt.value = ""
         _errorMessage.value = null
         _statusMessage.value = "Chat reset."
     }

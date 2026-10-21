@@ -3,86 +3,38 @@ package com.example.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.graphics.Bitmap
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Crop
-import androidx.compose.material.icons.filled.CropFree
-import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.api.ApiConfigRepository
 import com.example.model.ChatMessage
 import com.example.model.MessageSender
 import com.example.service.OverlayStateManager
 import com.example.ui.theme.CyanPrimary
 import com.example.ui.theme.DarkNavySurface
-import com.example.ui.theme.DarkNavySurfaceElevated
-import com.example.ui.theme.DarkNavySurfaceVariant
-import com.example.ui.theme.PurpleAccent
 
 @Composable
 fun OverlayPanelView(
@@ -91,634 +43,171 @@ fun OverlayPanelView(
     onPickImageRequested: () -> Unit,
     onMinimizeRequested: () -> Unit,
     onCloseRequested: () -> Unit,
-    onOpenSettingsRequested: () -> Unit
+    onOpenSettingsRequested: () -> Unit,
+    isFloating: Boolean = true,
+    onCropImageRequested: () -> Unit = {},
+    onMove: (Float, Float) -> Unit = { _, _ -> },
+    onResize: (Float, Float) -> Unit = { _, _ -> },
+    onGeometryChanged: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val currentImage by OverlayStateManager.currentImage.collectAsState()
-    val chatMessages by OverlayStateManager.chatMessages.collectAsState()
-    val isLoading by OverlayStateManager.isLoading.collectAsState()
-    val errorMessage by OverlayStateManager.errorMessage.collectAsState()
-    val statusMessage by OverlayStateManager.statusMessage.collectAsState()
-
-    val configRepo = remember { ApiConfigRepository.getInstance(context) }
-    val apiConfig by configRepo.configFlow.collectAsState()
-    val isConfigured = remember(apiConfig) { configRepo.isConfigured(apiConfig) }
-
-    var inputPrompt by remember { mutableStateOf("") }
-    val listState = rememberLazyListState()
-
-    // Auto scroll to bottom when new messages arrive
-    LaunchedEffect(chatMessages.size, isLoading) {
-        if (chatMessages.isNotEmpty()) {
-            listState.animateScrollToItem(chatMessages.size - 1)
-        }
+    val messages by OverlayStateManager.chatMessages.collectAsState()
+    val loading by OverlayStateManager.isLoading.collectAsState()
+    val error by OverlayStateManager.errorMessage.collectAsState()
+    val status by OverlayStateManager.statusMessage.collectAsState()
+    val prompt by OverlayStateManager.draftPrompt.collectAsState()
+    val config by remember { ApiConfigRepository.getInstance(context) }.configFlow.collectAsState()
+    val list = rememberLazyListState()
+    var menu by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf(false) }
+    LaunchedEffect(currentImage) { if (currentImage == null) preview = false }
+    LaunchedEffect(messages.size, loading) {
+        if (messages.isNotEmpty()) list.animateScrollToItem(messages.lastIndex + if (loading) 1 else 0)
     }
 
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .testTag("overlay_panel_surface"),
-        shape = RoundedCornerShape(24.dp),
-        color = DarkNavySurface,
-        shadowElevation = 16.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1E293B))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
+    Surface(modifier.fillMaxSize().testTag("overlay_panel_surface"), shape = RoundedCornerShape(22.dp), color = DarkNavySurface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+        val compact = maxHeight < 420.dp
+        val tiny = maxHeight < 230.dp
+        Column(Modifier.fillMaxSize().then(if (isFloating) Modifier else Modifier.imePadding()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (isFloating && !tiny) {
+                Box(
+                    Modifier.fillMaxWidth().height(28.dp).testTag("overlay_drag_handle").pointerInput(onMove) {
+                        detectDragGestures(onDragEnd = onGeometryChanged, onDragCancel = onGeometryChanged) { change, amount ->
+                            change.consume(); onMove(amount.x, amount.y)
+                        }
+                    }, contentAlignment = Alignment.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF00363F)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Visibility,
-                            contentDescription = "Peek Eye",
-                            tint = CyanPrimary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "Peek",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = Color.White
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = if (isConfigured) Color(0xFF064E3B) else Color(0xFF7F1D1D)
-                            ) {
-                                Text(
-                                    text = apiConfig.modelName,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (isConfigured) Color(0xFF6EE7B7) else Color(0xFFFCA5A5),
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = onOpenSettingsRequested,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .testTag("overlay_settings_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    if (chatMessages.isNotEmpty() || currentImage != null) {
-                        IconButton(
-                            onClick = {
-                                OverlayStateManager.clearChat()
-                                OverlayStateManager.clearImage()
-                            },
-                            modifier = Modifier
-                                .size(36.dp)
-                                .testTag("overlay_clear_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.DeleteSweep,
-                                contentDescription = "Clear All",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-
-                    IconButton(
-                        onClick = onMinimizeRequested,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .testTag("overlay_minimize_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Remove,
-                            contentDescription = "Minimize",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onCloseRequested,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .testTag("overlay_close_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                    Box(Modifier.width(40.dp).height(4.dp).background(MaterialTheme.colorScheme.outline, RoundedCornerShape(2.dp)))
                 }
             }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Error or Status message banner if any
-            AnimatedVisibility(visible = !errorMessage.isNullOrBlank()) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color(0x33EF4444),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x66EF4444)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = errorMessage.orEmpty(),
-                            color = Color(0xFFFCA5A5),
-                            fontSize = 12.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(
-                            onClick = { OverlayStateManager.setErrorMessage(null) },
-                            modifier = Modifier.size(20.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Dismiss error",
-                                tint = Color(0xFFFCA5A5),
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
+            if (!tiny) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Visibility, null, tint = CyanPrimary, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (isFloating) "Peek" else config.provider.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(config.modelName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+                if (compact && currentImage != null) IconButton(onClick = { preview = true }) { Icon(Icons.Default.Image, "Preview attached image") }
+                Box {
+                    IconButton(onClick = { menu = true }, modifier = Modifier.testTag("overlay_menu_button")) { Icon(Icons.Default.MoreVert, "Conversation actions") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Settings") }, onClick = { menu = false; onOpenSettingsRequested() }, leadingIcon = { Icon(Icons.Default.Settings, null) })
+                        DropdownMenuItem(text = { Text("Clear conversation") }, modifier = Modifier.testTag("overlay_clear_button"), onClick = {
+                            menu = false; OverlayStateManager.clearChat(); OverlayStateManager.clearImage()
+                        }, leadingIcon = { Icon(Icons.Default.DeleteSweep, null) })
+                        if (isFloating) DropdownMenuItem(text = { Text("Stop overlay") }, onClick = { menu = false; onCloseRequested() }, leadingIcon = { Icon(Icons.Default.Close, null) })
                     }
                 }
+                if (isFloating) IconButton(onClick = onMinimizeRequested, modifier = Modifier.testTag("overlay_minimize_button")) { Icon(Icons.Default.Remove, "Minimize to bubble") }
             }
-
-            // Image Source Section
-            if (currentImage != null) {
-                // Attached Image Thumbnail Bar
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = DarkNavySurfaceVariant,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val bitmap = currentImage!!
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Attached image thumbnail",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .border(1.dp, CyanPrimary, RoundedCornerShape(8.dp))
-                        )
-
-                        Spacer(modifier = Modifier.width(10.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Active Image",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                color = Color.White
-                            )
-                            Text(
-                                text = "${bitmap.width} × ${bitmap.height} px",
-                                fontSize = 11.sp,
-                                color = Color(0xFF94A3B8)
-                            )
-                        }
-
-                        // Re-crop button
-                        IconButton(
-                            onClick = onCaptureScreenRequested,
-                            modifier = Modifier
-                                .size(32.dp)
-                                .testTag("overlay_recrop_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Crop,
-                                contentDescription = "Re-capture screen region",
-                                tint = CyanPrimary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        // Replace with image picker
-                        IconButton(
-                            onClick = onPickImageRequested,
-                            modifier = Modifier
-                                .size(32.dp)
-                                .testTag("overlay_replace_image_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AddPhotoAlternate,
-                                contentDescription = "Replace Image",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        // Remove
-                        IconButton(
-                            onClick = { OverlayStateManager.clearImage() },
-                            modifier = Modifier
-                                .size(32.dp)
-                                .testTag("overlay_remove_image_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Remove Image",
-                                tint = Color(0xFFF87171),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
+            if (preview && currentImage != null) {
+                ImagePreviewView(currentImage!!, Modifier.weight(1f), onBack = { preview = false }, onCrop = onCropImageRequested)
             } else {
-                // Dual Capture / Add Image buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { onCaptureScreenRequested() }
-                            .testTag("overlay_capture_screen_button"),
-                        color = Color(0xFF00363F),
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.4f))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CropFree,
-                                contentDescription = "Capture Screen",
-                                tint = CyanPrimary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Select Region",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White
-                            )
-                        }
-                    }
-
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { onPickImageRequested() }
-                            .testTag("overlay_upload_image_button"),
-                        color = DarkNavySurfaceElevated,
-                        shape = RoundedCornerShape(12.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AddPhotoAlternate,
-                                contentDescription = "Upload Image",
-                                tint = PurpleAccent,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "+ Add Image",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White
-                            )
-                        }
+                if (error != null) {
+                    Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.error.copy(alpha = 0.12f), RoundedCornerShape(10.dp)).padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(error.orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 3)
+                        IconButton(onClick = { OverlayStateManager.setErrorMessage(null) }) { Icon(Icons.Default.Close, "Dismiss error") }
                     }
                 }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Chat Messages Stream
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f, fill = false)
-                    .heightIn(min = 120.dp, max = 280.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF090D16))
-                    .padding(8.dp)
-            ) {
-                if (chatMessages.isEmpty() && !isLoading) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Psychology,
-                            contentDescription = "Peek AI Ready",
-                            tint = Color(0xFF475569),
-                            modifier = Modifier.size(32.dp)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Peek is listening",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFFE2E8F0)
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "Select any part of your screen or add an image, then ask a question.",
-                            fontSize = 11.sp,
-                            color = Color(0xFF64748B),
-                            modifier = Modifier.padding(horizontal = 8.dp),
-                            lineHeight = 15.sp
-                        )
-                    }
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(chatMessages, key = { it.id }) { msg ->
-                            ChatMessageBubble(msg = msg, onCopy = { text ->
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Peek AI Response", text)
-                                clipboard.setPrimaryClip(clip)
-                                Toast.makeText(context, "Copied response to clipboard", Toast.LENGTH_SHORT).show()
-                            })
+                if (!compact) currentImage?.let { bitmap ->
+                    Row(Modifier.fillMaxWidth().background(Color(0xFF1E293B), RoundedCornerShape(12.dp)).padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Image(bitmap.asImageBitmap(), "Preview attached image", contentScale = ContentScale.Crop, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).clickable { preview = true }.testTag("image_preview_button"))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Attached image", style = MaterialTheme.typography.labelLarge)
+                            Text("${bitmap.width} × ${bitmap.height} · Tap to preview", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-
-                        if (isLoading) {
-                            item {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                        color = CyanPrimary
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "Peek is analyzing...",
-                                        fontSize = 12.sp,
-                                        color = CyanPrimary
-                                    )
+                        IconButton(onClick = onCropImageRequested, modifier = Modifier.testTag("overlay_recrop_button")) { Icon(Icons.Default.Crop, "Crop attached image") }
+                        IconButton(onClick = { OverlayStateManager.clearImage() }, modifier = Modifier.testTag("overlay_remove_image_button")) { Icon(Icons.Default.Close, "Remove image") }
+                    }
+                }
+                Box(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF090D16))) {
+                    if (messages.isEmpty() && !loading) {
+                        Column(Modifier.align(Alignment.Center).padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.ChatBubbleOutline, null, tint = CyanPrimary, modifier = Modifier.size(30.dp))
+                            Text("What caught your eye?", style = MaterialTheme.typography.titleMedium)
+                            Text("Capture a region, add an image, or type a question.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("chat_messages"), contentPadding = PaddingValues(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            items(messages, key = { it.id }) { message -> ChatMessageBubble(message) { copyText(context, it) } }
+                            if (loading) item {
+                                Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(10.dp)); Text("Thinking…", style = MaterialTheme.typography.bodySmall, color = CyanPrimary)
                                 }
                             }
                         }
                     }
                 }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Quick Prompt Chips
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                val promptSuggestions = listOf(
-                    "Explain this",
-                    "Extract text",
-                    "Summarize",
-                    "Translate",
-                    "What is this error?",
-                    "Solve step-by-step"
-                )
-                for (suggestion in promptSuggestions) {
-                    FilterChip(
-                        selected = false,
-                        enabled = !isLoading,
-                        onClick = {
-                            if (!isLoading) {
-                                inputPrompt = suggestion
-                                OverlayStateManager.sendPrompt(suggestion, context)
-                                inputPrompt = ""
-                            }
-                        },
-                        label = { Text(suggestion, fontSize = 11.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            containerColor = DarkNavySurfaceElevated,
-                            labelColor = Color(0xFFCBD5E1),
-                            disabledContainerColor = DarkNavySurfaceElevated.copy(alpha = 0.5f),
-                            disabledLabelColor = Color(0xFF64748B)
-                        ),
-                        border = FilterChipDefaults.filterChipBorder(
-                            enabled = !isLoading,
-                            selected = false,
-                            borderColor = Color(0xFF334155),
-                            disabledBorderColor = Color(0xFF1E293B)
-                        )
+                if (!compact && (messages.isEmpty() || currentImage != null)) {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (suggestion in listOf("Explain this", "Extract text", "Summarize", "Translate", "What is this error?", "Solve step-by-step")) {
+                            SuggestionChip(onClick = {
+                                if (OverlayStateManager.sendPrompt(suggestion, context)) OverlayStateManager.setDraftPrompt("")
+                            }, enabled = !loading, label = { Text(suggestion) })
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                    Box {
+                        var attachmentMenu by remember { mutableStateOf(false) }
+                        IconButton(onClick = { attachmentMenu = true }, modifier = Modifier.testTag("overlay_add_image_button")) { Icon(Icons.Default.Add, "Add attachment") }
+                        DropdownMenu(expanded = attachmentMenu, onDismissRequest = { attachmentMenu = false }) {
+                            DropdownMenuItem(text = { Text("Capture screen region") }, onClick = { attachmentMenu = false; onCaptureScreenRequested() }, modifier = Modifier.testTag("overlay_capture_screen_button"))
+                            DropdownMenuItem(text = { Text("Choose image") }, onClick = { attachmentMenu = false; onPickImageRequested() }, modifier = Modifier.testTag("overlay_upload_image_button"))
+                        }
+                    }
+                    OutlinedTextField(
+                        value = prompt, onValueChange = OverlayStateManager::setDraftPrompt,
+                        placeholder = { Text(if (currentImage == null) "Ask anything…" else "Ask about this image…") },
+                        modifier = Modifier.weight(1f).heightIn(max = 120.dp).testTag("overlay_prompt_input"), maxLines = 4,
+                        shape = RoundedCornerShape(16.dp), textStyle = MaterialTheme.typography.bodyMedium
                     )
+                    IconButton(onClick = {
+                        if (loading) OverlayStateManager.cancelRequest()
+                        else if (OverlayStateManager.sendPrompt(prompt, context)) OverlayStateManager.setDraftPrompt("")
+                    }, enabled = loading || prompt.isNotBlank() || currentImage != null, modifier = Modifier.testTag("overlay_send_button")) {
+                        Icon(if (loading) Icons.Default.StopCircle else Icons.AutoMirrored.Filled.Send, if (loading) "Stop generating" else "Send question", tint = CyanPrimary)
+                    }
+                }
+                if (!compact && status != null && !loading && error == null) Text(status.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            if (isFloating && !tiny) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Box(Modifier.size(36.dp).testTag("overlay_resize_handle").pointerInput(onResize) {
+                        detectDragGestures(onDragEnd = onGeometryChanged, onDragCancel = onGeometryChanged) { change, amount -> change.consume(); onResize(amount.x, amount.y) }
+                    }, contentAlignment = Alignment.Center) { Icon(Icons.Default.OpenInFull, "Drag to resize", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Prompt Input Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Quick + Gallery button
-                IconButton(
-                    onClick = onPickImageRequested,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .testTag("overlay_add_image_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add image",
-                        tint = CyanPrimary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                OutlinedTextField(
-                    value = inputPrompt,
-                    onValueChange = { inputPrompt = it },
-                    placeholder = {
-                        Text(
-                            text = if (currentImage != null) "Ask about this image..." else "Ask a question...",
-                            fontSize = 13.sp,
-                            color = Color(0xFF64748B)
-                        )
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("overlay_prompt_input"),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedBorderColor = CyanPrimary,
-                        unfocusedBorderColor = Color(0xFF334155),
-                        focusedContainerColor = DarkNavySurfaceElevated,
-                        unfocusedContainerColor = DarkNavySurfaceElevated
-                    ),
-                    maxLines = 3,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp)
-                )
-
-                Spacer(modifier = Modifier.width(6.dp))
-
-                IconButton(
-                    onClick = {
-                        if (isLoading) OverlayStateManager.cancelRequest()
-                        else if (OverlayStateManager.sendPrompt(inputPrompt, context)) inputPrompt = ""
-                    },
-                    enabled = isLoading || inputPrompt.isNotBlank() || currentImage != null,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (!isLoading && (inputPrompt.isNotBlank() || currentImage != null)) CyanPrimary else Color(0xFF334155)
-                        )
-                        .testTag("overlay_send_button")
-                ) {
-                    Icon(
-                        imageVector = if (isLoading) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                        contentDescription = if (isLoading) "Stop generating" else "Send",
-                        tint = if (!isLoading && (inputPrompt.isNotBlank() || currentImage != null)) Color(0xFF00363F) else Color(0xFF94A3B8),
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
+        }
         }
     }
 }
 
+internal fun copyText(context: Context, text: String) {
+    (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Peek response", text))
+    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+}
+
 @Composable
-fun ChatMessageBubble(
-    msg: ChatMessage,
-    onCopy: (String) -> Unit
-) {
-    val isUser = msg.sender == MessageSender.USER
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-        ) {
-            Text(
-                text = if (isUser) "You" else "Peek AI",
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (isUser) CyanPrimary else PurpleAccent
-            )
-            if (msg.hasImageAttachment) {
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "• [Image]",
-                    fontSize = 10.sp,
-                    color = Color(0xFF94A3B8)
-                )
-            }
-        }
-
-        Surface(
-            shape = RoundedCornerShape(
-                topStart = 12.dp,
-                topEnd = 12.dp,
-                bottomStart = if (isUser) 12.dp else 2.dp,
-                bottomEnd = if (isUser) 2.dp else 12.dp
-            ),
-            color = when {
-                msg.isError -> Color(0x33EF4444)
-                isUser -> Color(0xFF1E293B)
-                else -> DarkNavySurfaceVariant
-            },
-            border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                if (msg.isError) Color(0x66EF4444) else Color(0xFF334155)
-            )
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+fun ChatMessageBubble(msg: ChatMessage, onCopy: (String) -> Unit) {
+    val user = msg.sender == MessageSender.USER
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
+        Text(if (user) "You" else "Peek", style = MaterialTheme.typography.labelSmall, color = if (user) CyanPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        Surface(shape = RoundedCornerShape(14.dp), color = if (user) Color(0xFF1E293B) else Color(0xFF111B2D)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (msg.hasImageAttachment) Text("Image attached", style = MaterialTheme.typography.labelSmall, color = CyanPrimary)
                 SelectionContainer {
-                    Text(
-                        text = msg.text,
-                        fontSize = 12.5.sp,
-                        color = if (msg.isError) Color(0xFFFCA5A5) else Color(0xFFF1F5F9),
-                        lineHeight = 17.sp
-                    )
+                    if (user || msg.isError) Text(msg.text, style = MaterialTheme.typography.bodyMedium, color = if (msg.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                    else MarkdownText(msg.text)
                 }
-
-                if (!isUser && !msg.isError) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        IconButton(
-                            onClick = { onCopy(msg.text) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy message",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(13.dp)
-                            )
-                        }
-                    }
+                if (msg.isCancelled) Text("Stopped", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!user && !msg.isError) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    IconButton(onClick = { onCopy(msg.text) }) { Icon(Icons.Default.ContentCopy, "Copy answer", modifier = Modifier.size(18.dp)) }
                 }
             }
         }

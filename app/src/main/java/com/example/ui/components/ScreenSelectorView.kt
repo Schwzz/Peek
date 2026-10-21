@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -49,6 +50,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.example.util.CropGeometry
 import com.example.ui.theme.CyanPrimary
 import kotlin.math.max
 import kotlin.math.min
@@ -67,11 +69,17 @@ fun ScreenSelectorView(
         val screenWidthPx = constraints.maxWidth.toFloat()
         val screenHeightPx = constraints.maxHeight.toFloat()
 
-        // Initial selection centered in middle third of screen
-        var rectLeft by remember(screenWidthPx, screenHeightPx) { mutableStateOf(screenWidthPx * 0.15f) }
-        var rectTop by remember(screenWidthPx, screenHeightPx) { mutableStateOf(screenHeightPx * 0.30f) }
-        var rectRight by remember(screenWidthPx, screenHeightPx) { mutableStateOf(screenWidthPx * 0.85f) }
-        var rectBottom by remember(screenWidthPx, screenHeightPx) { mutableStateOf(screenHeightPx * 0.65f) }
+        val fit = CropGeometry.fit(capturedBitmap.width, capturedBitmap.height, screenWidthPx, screenHeightPx)
+        var zoom by remember(screenWidthPx, screenHeightPx) { mutableStateOf(1f) }
+        var pan by remember(screenWidthPx, screenHeightPx) { mutableStateOf(Offset.Zero) }
+        var panMode by remember { mutableStateOf(false) }
+        val transform = CropGeometry.fit(capturedBitmap.width, capturedBitmap.height, screenWidthPx, screenHeightPx, zoom, pan.x, pan.y)
+        val latestTransform by androidx.compose.runtime.rememberUpdatedState(transform)
+        // Selection is mapped through the fitted image instead of stretching the screenshot.
+        var rectLeft by remember(screenWidthPx, screenHeightPx) { mutableStateOf(fit.left + fit.width * 0.15f) }
+        var rectTop by remember(screenWidthPx, screenHeightPx) { mutableStateOf(fit.top + fit.height * 0.30f) }
+        var rectRight by remember(screenWidthPx, screenHeightPx) { mutableStateOf(fit.left + fit.width * 0.85f) }
+        var rectBottom by remember(screenWidthPx, screenHeightPx) { mutableStateOf(fit.top + fit.height * 0.65f) }
 
         var dragMode by remember { mutableStateOf<DragMode?>(null) }
         val handleRadius = 36f
@@ -81,9 +89,10 @@ fun ScreenSelectorView(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(screenWidthPx, screenHeightPx) {
+                .pointerInput(screenWidthPx, screenHeightPx, panMode, zoom) {
                     detectDragGestures(
-                        onDragStart = { offset ->
+                        onDragStart = dragStart@ { offset ->
+                            if (panMode) return@dragStart
                             val l = min(rectLeft, rectRight)
                             val r = max(rectLeft, rectRight)
                             val t = min(rectTop, rectBottom)
@@ -118,8 +127,13 @@ fun ScreenSelectorView(
                             dragMode = null
                         },
                         onDragCancel = { dragMode = null },
-                        onDrag = { change, dragAmount ->
+                        onDrag = drag@ { change, dragAmount ->
                             change.consume()
+                            if (panMode) {
+                                pan = Offset((pan.x + dragAmount.x).coerceIn(-latestTransform.width / 2, latestTransform.width / 2),
+                                    (pan.y + dragAmount.y).coerceIn(-latestTransform.height / 2, latestTransform.height / 2))
+                                return@drag
+                            }
                             when (dragMode) {
                                 DragMode.MOVE -> {
                                     val dx = dragAmount.x
@@ -163,8 +177,8 @@ fun ScreenSelectorView(
                 // Draw background screenshot
                 drawImage(
                     image = imageBitmap,
-                    dstOffset = IntOffset.Zero,
-                    dstSize = IntSize(size.width.toInt(), size.height.toInt())
+                    dstOffset = IntOffset(transform.left.toInt(), transform.top.toInt()),
+                    dstSize = IntSize(transform.width.toInt().coerceAtLeast(1), transform.height.toInt().coerceAtLeast(1))
                 )
 
                 val l = min(rectLeft, rectRight)
@@ -244,53 +258,20 @@ fun ScreenSelectorView(
                 color = Color(0xDD0F172A),
                 shadowElevation = 8.dp
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.CropFree,
-                            contentDescription = "Crop mode",
-                            tint = CyanPrimary
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = "Select Region to Analyze",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = Color.White
-                            )
-                            val selW = (max(rectLeft, rectRight) - min(rectLeft, rectRight)).toInt()
-                            val selH = (max(rectBottom, rectTop) - min(rectTop, rectBottom)).toInt()
-                            Text(
-                                text = "Drag handles or anywhere on screen ($selW × $selH px)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF94A3B8)
-                            )
-                        }
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Text("Select a region", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(modifier = Modifier.width(44.dp), onClick = { zoom = (zoom / 1.5f).coerceAtLeast(1f); if (zoom == 1f) pan = Offset.Zero }) { Text("−", color = CyanPrimary) }
+                        Text("${(zoom * 100).toInt()}%", color = Color.White)
+                        TextButton(modifier = Modifier.width(44.dp), onClick = { zoom = (zoom * 1.5f).coerceAtMost(6f) }) { Text("+", color = CyanPrimary) }
+                        TextButton(onClick = { panMode = !panMode }) { Text(if (panMode) "Select" else "Move", color = CyanPrimary) }
+                        TextButton(onClick = {
+                            zoom = 1f; pan = Offset.Zero
+                            rectLeft = fit.left; rectTop = fit.top
+                            rectRight = fit.left + fit.width; rectBottom = fit.top + fit.height
+                        }, modifier = Modifier.testTag("select_fullscreen_button")) { Text("Full", color = CyanPrimary) }
                     }
-
-                    OutlinedButton(
-                        onClick = {
-                            rectLeft = 0f
-                            rectTop = 0f
-                            rectRight = screenWidthPx
-                            rectBottom = screenHeightPx
-                        },
-                        modifier = Modifier.testTag("select_fullscreen_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Fullscreen,
-                            contentDescription = "Full Screen",
-                            tint = CyanPrimary
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Full", color = Color.White)
-                    }
+                    Text(if (panMode) "Drag the image. Tap Select to adjust the region." else "Drag a region or adjust its corners. Use + for detail.", style = MaterialTheme.typography.bodySmall, color = Color(0xFF94A3B8))
                 }
             }
 
@@ -330,20 +311,14 @@ fun ScreenSelectorView(
                             val t = min(rectTop, rectBottom)
                             val b = max(rectTop, rectBottom)
 
-                            // Scale to actual bitmap dimensions
-                            val scaleX = capturedBitmap.width.toFloat() / screenWidthPx
-                            val scaleY = capturedBitmap.height.toFloat() / screenHeightPx
-
-                            val cropRect = Rect(
-                                (l * scaleX).toInt().coerceIn(0, capturedBitmap.width - 1),
-                                (t * scaleY).toInt().coerceIn(0, capturedBitmap.height - 1),
-                                (r * scaleX).toInt().coerceIn(1, capturedBitmap.width),
-                                (b * scaleY).toInt().coerceIn(1, capturedBitmap.height)
-                            )
+                            val crop = CropGeometry.map(l, t, r, b, transform, capturedBitmap.width, capturedBitmap.height)
+                            val cropRect = Rect(crop.left, crop.top, crop.right, crop.bottom)
                             onSelectionConfirmed(cropRect)
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CyanPrimary),
-                        enabled = kotlin.math.abs(rectRight - rectLeft) >= 40f && kotlin.math.abs(rectBottom - rectTop) >= 40f,
+                        enabled = kotlin.math.abs(rectRight - rectLeft) >= 2f && kotlin.math.abs(rectBottom - rectTop) >= 2f &&
+                            max(rectLeft, rectRight) > transform.left && min(rectLeft, rectRight) < transform.left + transform.width &&
+                            max(rectTop, rectBottom) > transform.top && min(rectTop, rectBottom) < transform.top + transform.height,
                         modifier = Modifier
                             .weight(1.5f)
                             .testTag("confirm_crop_button")
@@ -354,7 +329,7 @@ fun ScreenSelectorView(
                             tint = Color(0xFF00363F)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Crop & Ask Peek", color = Color(0xFF00363F))
+                        Text("Use selection", color = Color(0xFF00363F))
                     }
                 }
             }

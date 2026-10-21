@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.res.Configuration
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -25,14 +26,19 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.example.util.OverlayGeometry
+import com.example.util.PanelBounds
 import com.example.MainActivity
 import com.example.ui.components.FloatingBubbleView
 import com.example.ui.components.OverlayPanelView
 import com.example.ui.screens.ScreenCaptureActivity
+import com.example.ui.screens.ScreenSelectorActivity
 import com.example.ui.theme.PeekTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +60,10 @@ class OverlayService : Service() {
 
     private var panelView: ComposeView? = null
     private var panelParams: WindowManager.LayoutParams? = null
+
+    private val layoutPrefs by lazy { getSharedPreferences("peek_overlay_layout", MODE_PRIVATE) }
+    private var preferredPanel: PanelBounds? = null
+    private var keyboardInset = 0
 
     private val channelId = "peek_overlay_channel"
     private val notificationId = 1001
@@ -113,13 +123,13 @@ class OverlayService : Service() {
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                     WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 40
-            y = 300
+            val metrics = resources.displayMetrics
+            x = (layoutPrefs.getFloat("bubble_x", 0.05f) * metrics.widthPixels).toInt()
+            y = (layoutPrefs.getFloat("bubble_y", 0.35f) * metrics.heightPixels).toInt()
         }
 
         bubbleView = ComposeView(this).apply {
@@ -130,64 +140,14 @@ class OverlayService : Service() {
             setContent {
                 PeekTheme {
                     FloatingBubbleView(
-                        onClick = {
-                            OverlayStateManager.togglePanel()
-                        }
+                        onClick = { OverlayStateManager.togglePanel() },
+                        onDrag = { dx, dy -> moveBubble(dx, dy) },
+                        onDragEnd = { snapBubble() }
                     )
                 }
             }
 
-            // Draggable Touch Listener with reliable tap detection
-            val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-            var initialX = 0
-            var initialY = 0
-            var initialTouchX = 0f
-            var initialTouchY = 0f
-            var isDragging = false
-            var startClickTime = 0L
 
-            setOnTouchListener { view, event ->
-                val params = bubbleParams ?: return@setOnTouchListener false
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        initialX = params.x
-                        initialY = params.y
-                        initialTouchX = event.rawX
-                        initialTouchY = event.rawY
-                        isDragging = false
-                        startClickTime = System.currentTimeMillis()
-                        true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = (event.rawX - initialTouchX).toInt()
-                        val dy = (event.rawY - initialTouchY).toInt()
-                        if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
-                            isDragging = true
-                        }
-                        if (isDragging) {
-                            params.x = initialX + dx
-                            params.y = initialY + dy
-                            runCatching { windowManager.updateViewLayout(view, params) }
-                        }
-                        true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        val clickDuration = System.currentTimeMillis() - startClickTime
-                        if (!isDragging && clickDuration < 400) {
-                            view.performClick()
-                            OverlayStateManager.togglePanel()
-                        } else if (isDragging) {
-                            // Snap to closest screen edge
-                            val metrics = resources.displayMetrics
-                            val screenWidth = metrics.widthPixels
-                            params.x = if (params.x + view.width / 2 < screenWidth / 2) 20 else screenWidth - view.width - 20
-                            runCatching { windowManager.updateViewLayout(view, params) }
-                        }
-                        true
-                    }
-                    else -> false
-                }
-            }
         }
 
         runCatching { windowManager.addView(bubbleView, bubbleParams) }.onFailure {
@@ -199,19 +159,27 @@ class OverlayService : Service() {
 
         // 2. Setup Overlay Panel - bound strictly to the panel's dimensions so taps outside reach underlying app
         val displayMetrics = resources.displayMetrics
-        val panelWidth = (displayMetrics.widthPixels * 0.92f).toInt().coerceAtMost((460 * displayMetrics.density).toInt())
+        val panelWidth = (layoutPrefs.getFloat("panel_width_dp", 380f) * displayMetrics.density).toInt()
+        val panelHeight = (layoutPrefs.getFloat("panel_height_dp", 560f) * displayMetrics.density).toInt()
+        preferredPanel = OverlayGeometry.clampPanel(PanelBounds(
+            (layoutPrefs.getFloat("panel_x", 0.04f) * displayMetrics.widthPixels).toInt(),
+            (layoutPrefs.getFloat("panel_y", 0.10f) * displayMetrics.heightPixels).toInt(),
+            panelWidth, panelHeight
+        ), displayMetrics.widthPixels, displayMetrics.heightPixels, displayMetrics.density)
 
         panelParams = WindowManager.LayoutParams(
-            panelWidth,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            preferredPanel!!.width,
+            preferredPanel!!.height,
             layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
                     WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            gravity = Gravity.TOP or Gravity.START
+            x = preferredPanel!!.x
+            y = preferredPanel!!.y
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
         }
 
         panelView = ComposeView(this).apply {
@@ -233,6 +201,10 @@ class OverlayService : Service() {
                 PeekTheme {
                     OverlayPanelView(
                         modifier = Modifier.fillMaxWidth(),
+                        onMove = { dx, dy -> changePanel(dx, dy, resize = false) },
+                        onResize = { dx, dy -> changePanel(dx, dy, resize = true) },
+                        onGeometryChanged = { savePanelBounds() },
+                        onCropImageRequested = { ScreenSelectorActivity.cropCurrentImage(this@OverlayService) },
                         onCaptureScreenRequested = {
                             val intent = Intent(this@OverlayService, ScreenCaptureActivity::class.java).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -240,6 +212,7 @@ class OverlayService : Service() {
                             startActivity(intent)
                         },
                         onPickImageRequested = {
+                            OverlayStateManager.setPanelExpanded(false)
                             val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
                                 action = MainActivity.ACTION_PICK_IMAGE
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -249,10 +222,9 @@ class OverlayService : Service() {
                         onMinimizeRequested = {
                             OverlayStateManager.setPanelExpanded(false)
                         },
-                        onCloseRequested = {
-                            OverlayStateManager.setPanelExpanded(false)
-                        },
+                        onCloseRequested = { stopSelf() },
                         onOpenSettingsRequested = {
+                            OverlayStateManager.setPanelExpanded(false)
                             val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
                                 action = MainActivity.ACTION_OPEN_SETTINGS
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -263,6 +235,81 @@ class OverlayService : Service() {
                 }
             }
         }
+        panelView?.let { view ->
+            ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
+                val inset = (insets.getInsets(WindowInsetsCompat.Type.ime()).bottom -
+                    insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom).coerceAtLeast(0)
+                if (keyboardInset != inset) {
+                    keyboardInset = inset
+                    view.post { updatePanelBounds() }
+                }
+                insets
+            }
+        }
+        moveBubble(0f, 0f)
+    }
+
+    private fun moveBubble(dx: Float, dy: Float) {
+        val params = bubbleParams ?: return
+        val metrics = resources.displayMetrics
+        val size = (60 * metrics.density).toInt()
+        val (x, y) = OverlayGeometry.clampBubble(params.x + dx.toInt(), params.y + dy.toInt(), size, metrics.widthPixels, metrics.heightPixels)
+        params.x = x; params.y = y
+        bubbleView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.updateViewLayout(it, params) } }
+    }
+
+    private fun snapBubble() {
+        val params = bubbleParams ?: return
+        val metrics = resources.displayMetrics
+        val size = (60 * metrics.density).toInt()
+        params.x = if (params.x + size / 2 < metrics.widthPixels / 2) 0 else metrics.widthPixels - size
+        moveBubble(0f, 0f)
+        layoutPrefs.edit().putFloat("bubble_x", params.x.toFloat() / metrics.widthPixels)
+            .putFloat("bubble_y", params.y.toFloat() / metrics.heightPixels).apply()
+    }
+
+    private fun changePanel(dx: Float, dy: Float, resize: Boolean) {
+        val preferred = preferredPanel ?: return
+        val actual = panelParams ?: return
+        preferredPanel = if (resize) preferred.copy(width = actual.width + dx.toInt(), height = actual.height + dy.toInt())
+            else preferred.copy(x = actual.x + dx.toInt(), y = actual.y + dy.toInt())
+        val metrics = resources.displayMetrics
+        preferredPanel = OverlayGeometry.clampPanel(preferredPanel!!, metrics.widthPixels, metrics.heightPixels, metrics.density)
+        updatePanelBounds()
+    }
+
+    private fun updatePanelBounds() {
+        val preferred = preferredPanel ?: return
+        val params = panelParams ?: return
+        val metrics = resources.displayMetrics
+        val fit = OverlayGeometry.clampPanel(preferred, metrics.widthPixels, (metrics.heightPixels - keyboardInset).coerceAtLeast(1), metrics.density)
+        params.width = fit.width; params.height = fit.height; params.x = fit.x; params.y = fit.y
+        panelView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.updateViewLayout(it, params) } }
+    }
+
+    private fun savePanelBounds() {
+        val bounds = preferredPanel ?: return
+        val metrics = resources.displayMetrics
+        layoutPrefs.edit().putFloat("panel_x", bounds.x.toFloat() / metrics.widthPixels)
+            .putFloat("panel_y", bounds.y.toFloat() / metrics.heightPixels)
+            .putFloat("panel_width_dp", bounds.width / metrics.density)
+            .putFloat("panel_height_dp", bounds.height / metrics.density).apply()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        keyboardInset = 0
+        val metrics = resources.displayMetrics
+        preferredPanel = preferredPanel?.copy(
+            x = (layoutPrefs.getFloat("panel_x", 0.04f) * metrics.widthPixels).toInt(),
+            y = (layoutPrefs.getFloat("panel_y", 0.10f) * metrics.heightPixels).toInt()
+        )
+        updatePanelBounds()
+        bubbleParams?.let {
+            it.x = (layoutPrefs.getFloat("bubble_x", 0.05f) * metrics.widthPixels).toInt()
+            it.y = (layoutPrefs.getFloat("bubble_y", 0.35f) * metrics.heightPixels).toInt()
+        }
+        moveBubble(0f, 0f)
     }
 
     private fun observeState() {
@@ -280,6 +327,7 @@ class OverlayService : Service() {
                     runCatching { windowManager.removeView(bubbleView) }
                 }
                 if (panelView?.isAttachedToWindow == false) {
+                    updatePanelBounds()
                     runCatching { windowManager.addView(panelView, panelParams) }.onFailure {
                         OverlayStateManager.setErrorMessage("Could not display Peek. Check overlay permission.")
                         stopSelf()

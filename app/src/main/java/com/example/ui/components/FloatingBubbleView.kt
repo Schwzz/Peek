@@ -8,6 +8,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
@@ -34,7 +36,9 @@ import com.example.ui.theme.DarkNavySurface
 @Composable
 fun FloatingBubbleView(
     modifier: Modifier = Modifier,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDrag: (Float, Float) -> Unit = { _, _ -> },
+    onDragEnd: () -> Unit = {}
 ) {
     val isLoading by OverlayStateManager.isLoading.collectAsState()
     val hasImage = OverlayStateManager.currentImage.collectAsState().value != null
@@ -53,6 +57,11 @@ fun FloatingBubbleView(
     Box(
         modifier = modifier
             .size(60.dp)
+            .pointerInput(onDrag) {
+                detectDragGestures(onDragEnd = onDragEnd, onDragCancel = onDragEnd) { change, amount ->
+                    change.consume(); onDrag(amount.x, amount.y)
+                }
+            }
             .clickable(onClick = onClick)
             .testTag("floating_bubble_button"),
         contentAlignment = Alignment.Center
