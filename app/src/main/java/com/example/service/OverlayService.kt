@@ -81,7 +81,7 @@ class OverlayService : Service() {
 
         if (Settings.canDrawOverlays(this)) {
             setupViews()
-            observeState()
+            if (OverlayStateManager.isServiceRunning.value) observeState()
         } else {
             OverlayStateManager.setErrorMessage("Display over other apps permission is required.")
             stopSelf()
@@ -352,6 +352,10 @@ class OverlayService : Service() {
         OverlayStateManager.setServiceRunning(false)
         OverlayStateManager.setPanelExpanded(false)
         OverlayStateManager.cancelRequest()
+        if (OverlayStateManager.isCapturing.value) {
+            stopService(Intent(this, MediaProjectionService::class.java))
+            OverlayStateManager.finishCapture()
+        }
 
         scope.cancel()
         lifecycleOwner?.onDestroy()

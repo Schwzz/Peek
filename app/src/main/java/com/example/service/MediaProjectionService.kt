@@ -15,6 +15,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.IntentCompat
 import com.example.ui.screens.ScreenSelectorActivity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -56,7 +57,8 @@ class MediaProjectionService : Service() {
                             mediaProjection
                         )
                         if (bitmap != null) {
-                            OverlayStateManager.setCapturedScreenToCrop(bitmap)
+                            if (OverlayStateManager.isCapturing.value) OverlayStateManager.setCapturedScreenToCrop(bitmap)
+                            else bitmap.recycle()
                         } else {
                             OverlayStateManager.setErrorMessage("Failed to capture screen buffer. Please try again.")
                             OverlayStateManager.finishCapture()
@@ -65,6 +67,8 @@ class MediaProjectionService : Service() {
                         OverlayStateManager.setErrorMessage("MediaProjection could not be initialized.")
                         OverlayStateManager.finishCapture()
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     OverlayStateManager.setErrorMessage("Capture error: ${e.message}")
                     OverlayStateManager.finishCapture()

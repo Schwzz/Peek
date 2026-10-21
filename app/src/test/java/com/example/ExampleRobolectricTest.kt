@@ -21,6 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -95,7 +96,9 @@ class ExampleRobolectricTest {
         assertEquals(1, edge.height)
     }
 
-    @Test fun largeImageDecodeIsBounded() = runBlocking {
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun largeImageDecodeIsBounded() = runBlocking {
         val file = java.io.File(context.cacheDir, "large-test.png")
         val bitmap = Bitmap.createBitmap(2400, 1200, Bitmap.Config.ARGB_8888)
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }

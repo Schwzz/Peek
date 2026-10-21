@@ -120,6 +120,7 @@ fun MainScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasOverlayPermission = Settings.canDrawOverlays(context)
+                if (!hasOverlayPermission && OverlayStateManager.isServiceRunning.value) OverlayService.stop(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
