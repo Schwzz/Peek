@@ -1,11 +1,13 @@
 package com.example
 
 import android.content.Intent
-import android.provider.Settings
+import android.graphics.Bitmap
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.BySelector
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.example.service.MediaProjectionService
@@ -29,10 +31,33 @@ class CaptureFlowInstrumentedTest {
         assertTrue(message + "; error=" + OverlayStateManager.errorMessage.value, predicate())
     }
 
-    private fun assertSettingsRemainsResumed() {
+    private fun click(selector: BySelector) {
+        val end = android.os.SystemClock.elapsedRealtime() + 15000
+        while (android.os.SystemClock.elapsedRealtime() < end) {
+            try {
+                val node = device.wait(Until.findObject(selector), 1000) ?: continue
+                node.click()
+                return
+            } catch (_: StaleObjectException) {
+                // Activity transitions can invalidate an accessibility node. Query it again.
+            }
+        }
+        fail("Control did not become available: $selector")
+    }
+
+    private fun evidence(name: String) {
+        val folder = File(context.filesDir, "capture-evidence").apply { mkdirs() }
+        device.dumpWindowHierarchy(File(folder, "$name.xml"))
+        instrumentation.uiAutomation.takeScreenshot()?.let { screenshot ->
+            File(folder, "$name.png").outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            screenshot.recycle()
+        }
+    }
+
+    private fun assertOtherAppRemainsResumed() {
         val activities = device.executeShellCommand("dumpsys activity activities")
         assertTrue("Capture switched to a Peek activity: $activities", activities.lineSequence().any {
-            (it.contains("mResumedActivity") || it.contains("topResumedActivity")) && it.contains("com.android.settings")
+            (it.contains("mResumedActivity") || it.contains("topResumedActivity")) && it.contains("CaptureTargetActivity")
         })
     }
 
@@ -44,53 +69,50 @@ class CaptureFlowInstrumentedTest {
                 instrumentation.uiAutomation.grantRuntimePermission(context.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
             }
             scenario = ActivityScenario.launch(MainActivity::class.java)
-            checkNotNull(device.wait(Until.findObject(By.text("Start Peek")), 10000)) { "Start Peek was not visible" }.click()
+            click(By.text("Start Peek"))
             val approve = device.wait(Until.findObject(By.res("android:id/button1")), 10000)
                 ?: device.wait(Until.findObject(By.textContains("Start now")), 3000)
             checkNotNull(approve) { "Android screen consent did not appear" }.click()
             awaitState("Projection never became ready") { OverlayStateManager.isScreenSharing.value }
             // Destroy the main Activity, then work in another app.
             scenario.close(); scenario = null
-            device.executeShellCommand("am start -a android.settings.SETTINGS")
+            device.executeShellCommand("am start -W -n ${context.packageName}.test/com.example.CaptureTargetActivity")
             device.waitForIdle()
-            assertSettingsRemainsResumed()
+            assertOtherAppRemainsResumed()
             assertTrue(OverlayStateManager.isScreenSharing.value)
 
             repeat(2) {
-                val bubble = device.wait(Until.findObject(By.descContains("Peek: tap to select screen")), 10000)
-                checkNotNull(bubble) { "Floating bubble was not available over Settings" }.click()
+                evidence("before-capture-$it")
+                click(By.descContains("Peek: tap to select screen"))
                 awaitState("No captured screen reached the selector") { OverlayStateManager.capturedScreenToCrop.value != null }
-                assertSettingsRemainsResumed()
+                assertOtherAppRemainsResumed()
+                evidence("selector-$it")
                 val frame = OverlayStateManager.capturedScreenToCrop.value!!
                 val colors = mutableSetOf<Int>()
                 for (x in 1..20) for (y in 1..20) colors += frame.getPixel((frame.width - 1) * x / 21, (frame.height - 1) * y / 21)
                 assertTrue("Projection produced a blank frame", colors.size > 2)
                 if (it == 0) {
-                    checkNotNull(device.wait(Until.findObject(By.text("Use selection")), 10000)).click()
+                    click(By.text("Use selection"))
                     awaitState("Selection did not return an image to the overlay") {
                         !OverlayStateManager.isCapturing.value && OverlayStateManager.currentImage.value != null
                     }
-                    assertSettingsRemainsResumed()
+                    assertOtherAppRemainsResumed()
                     assertTrue("Finishing a screenshot stopped projection", OverlayStateManager.isScreenSharing.value)
-                    checkNotNull(device.wait(Until.findObject(By.desc("Minimize to bubble")), 5000)).click()
+                    evidence("answer-panel")
+                    click(By.desc("Minimize to bubble"))
                 } else {
-                    // Back must dismiss the overlay selector without navigating Settings or ending sharing.
+                    // Back must dismiss selection without navigating the other app or ending sharing.
                     device.pressBack()
                     awaitState("Back did not cancel region selection") { !OverlayStateManager.isCapturing.value }
-                    assertSettingsRemainsResumed()
+                    assertOtherAppRemainsResumed()
                     assertTrue("Cancelling a screenshot stopped projection", OverlayStateManager.isScreenSharing.value)
                 }
             }
-            val folder = checkNotNull(context.getExternalFilesDir(null))
-            device.takeScreenshot(File(folder, "capture-over-other-app.png"))
+            evidence("capture-over-other-app")
             context.stopService(Intent(context, MediaProjectionService::class.java))
             awaitState("Explicit stop did not release projection") { !OverlayStateManager.isScreenSharing.value }
         } finally {
-            val folder = context.getExternalFilesDir(null)
-            if (folder != null) {
-                device.dumpWindowHierarchy(File(folder, "capture-window-hierarchy.xml"))
-                device.takeScreenshot(File(folder, "capture-final.png"))
-            }
+            evidence("capture-final")
             scenario?.close()
             context.stopService(Intent(context, MediaProjectionService::class.java))
             context.stopService(Intent(context, OverlayService::class.java))

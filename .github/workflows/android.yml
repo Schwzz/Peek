@@ -130,8 +130,9 @@ jobs:
             adb shell am instrument -w -r com.aistudio.peek.overlay.test/androidx.test.runner.AndroidJUnitRunner > capture-results.txt
             cat capture-results.txt
             adb logcat -d > capture-logcat.txt
-            adb pull /sdcard/Android/data/com.aistudio.peek.overlay/files/ capture-evidence || true
-            rg -q 'OK \([0-9]+ tests?\)' capture-results.txt
+            adb exec-out run-as com.aistudio.peek.overlay tar -cf - files/capture-evidence > capture-evidence.tar
+            tar -xf capture-evidence.tar
+            grep -Eq 'OK \([0-9]+ tests?\)' capture-results.txt
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -140,5 +141,5 @@ jobs:
           path: |
             capture-results.txt
             capture-logcat.txt
-            capture-evidence/
+            files/capture-evidence/
           if-no-files-found: ignore

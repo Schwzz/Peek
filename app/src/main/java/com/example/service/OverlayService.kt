@@ -400,11 +400,14 @@ class OverlayService : Service() {
         combine(OverlayStateManager.isPanelExpanded, OverlayStateManager.isCapturing, OverlayStateManager.capturedScreenToCrop) { expanded, capturing, bitmap ->
             Triple(expanded, capturing, bitmap)
         }.onEach { (expanded, capturing, bitmap) ->
-            fun hide(view: View?) { if (view?.isAttachedToWindow == true) runCatching { windowManager.removeView(view) } }
+            // Keep the window's Compose recomposer attached across captures. Detaching a
+            // retained composition cancels its window recomposer and can leave stale UI.
+            fun hide(view: View?) { view?.visibility = View.GONE }
             if (capturing) {
                 hide(bubbleView); hide(panelView)
-                if (bitmap != null && selectorWindow?.isAttachedToWindow == false) {
-                    runCatching { windowManager.addView(selectorWindow, selectorParams) }.onFailure {
+                if (bitmap != null) {
+                    selectorWindow?.visibility = View.VISIBLE
+                    if (selectorWindow?.isAttachedToWindow == false) runCatching { windowManager.addView(selectorWindow, selectorParams) }.onFailure {
                         OverlayStateManager.setErrorMessage("Could not show region selection: ${it.localizedMessage}")
                         OverlayStateManager.finishCapture()
                     }
@@ -414,8 +417,9 @@ class OverlayService : Service() {
             hide(selectorWindow)
             val view = if (expanded) panelView else bubbleView
             hide(if (expanded) bubbleView else panelView)
+            if (expanded) updatePanelBounds()
+            view?.visibility = View.VISIBLE
             if (view?.isAttachedToWindow == false) {
-                if (expanded) updatePanelBounds()
                 runCatching { windowManager.addView(view, if (expanded) panelParams else bubbleParams) }.onFailure {
                     OverlayStateManager.setErrorMessage("Could not display Peek. Check overlay permission.")
                     stopSelf()
