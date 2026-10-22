@@ -86,6 +86,7 @@ class CaptureFlowInstrumentedTest {
                 click(By.descContains("Peek: tap to select screen"))
                 awaitState("No captured screen reached the selector") { OverlayStateManager.capturedScreenToCrop.value != null }
                 assertOtherAppRemainsResumed()
+                checkNotNull(device.wait(Until.findObject(By.text("Use selection")), 15000)) { "Region selector controls were not visible" }
                 evidence("selector-$it")
                 val frame = OverlayStateManager.capturedScreenToCrop.value!!
                 val colors = mutableSetOf<Int>()
