@@ -89,6 +89,9 @@ fun OverlayPanelView(
                     Text(if (isFloating) "Peek" else config.provider.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(config.modelName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                 }
+                IconButton(onClick = onCaptureScreenRequested, modifier = Modifier.testTag("overlay_quick_capture_button")) {
+                    Icon(Icons.Default.CropFree, "Select screen region")
+                }
                 if (compact && currentImage != null) IconButton(onClick = { preview = true }) { Icon(Icons.Default.Image, "Preview attached image") }
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.testTag("overlay_menu_button")) { Icon(Icons.Default.MoreVert, "Conversation actions") }

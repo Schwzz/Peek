@@ -18,6 +18,7 @@ class ScreenSelectorActivity : ComponentActivity() {
 
     companion object {
         fun cropCurrentImage(context: Context) {
+            if (com.example.service.OverlayService.cropCurrentImage(context)) return
             val image = OverlayStateManager.currentImage.value ?: return
             if (!OverlayStateManager.beginCapture()) return
             OverlayStateManager.setCapturedScreenToCrop(image)

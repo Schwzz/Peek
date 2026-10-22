@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -44,6 +45,8 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
     val repo = remember { ApiConfigRepository.getInstance(context) }
     val config by repo.configFlow.collectAsState()
     val running by OverlayStateManager.isServiceRunning.collectAsState()
+    val sharing by OverlayStateManager.isScreenSharing.collectAsState()
+    val startingSharing by OverlayStateManager.isStartingScreenSharing.collectAsState()
     val image by OverlayStateManager.currentImage.collectAsState()
     val messages by OverlayStateManager.chatMessages.collectAsState()
     val configured = repo.isConfigured(config)
@@ -69,14 +72,22 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
             showChat = true
         }
     }
-    fun capture() {
-        runCatching { context.startActivity(Intent(context, ScreenCaptureActivity::class.java)) }
-            .onFailure { OverlayStateManager.setErrorMessage("Could not open capture: ${it.localizedMessage}") }
-    }
-    fun pickImage() { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     fun permission() {
         context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")))
     }
+    fun startOverApps(captureWhenReady: Boolean) {
+        if (!Settings.canDrawOverlays(context)) { permission(); return }
+        runCatching {
+            OverlayService.start(context)
+            // Put Peek's main task away before opening the isolated consent task or capturing.
+            (context as? Activity)?.moveTaskToBack(true)
+            if (OverlayStateManager.isScreenSharing.value) {
+                if (captureWhenReady) OverlayService.captureScreen(context, delayMs = 400)
+            } else ScreenCaptureActivity.launch(context, captureWhenReady)
+        }.onFailure { OverlayStateManager.setErrorMessage("Could not start Peek: ${it.localizedMessage}") }
+    }
+    fun capture() { startOverApps(captureWhenReady = true) }
+    fun pickImage() { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
 
     Scaffold(
         containerColor = DarkNavyBackground,
@@ -127,7 +138,7 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("Floating assistant", style = MaterialTheme.typography.titleMedium)
-                                Text(if (running) "Ready over your other apps" else "Open Peek over any app", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (sharing) "Screen access ready across apps" else if (running) "Tap the bubble to enable screen access" else "Select a region over any app", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Text(if (running) "ON" else "OFF", color = if (running) Color(0xFF6EE7B7) else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -136,11 +147,10 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
                                 when {
                                     running -> OverlayService.stop(context)
                                     !Settings.canDrawOverlays(context) -> permission()
-                                    else -> runCatching { OverlayService.start(context) }.onFailure {
-                                        OverlayStateManager.setErrorMessage("Could not start Peek: ${it.localizedMessage}")
-                                    }
+                                    else -> startOverApps(captureWhenReady = false)
                                 }
                             },
+                            enabled = !startingSharing,
                             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("toggle_overlay_service_button"),
                             shape = RoundedCornerShape(14.dp)
                         ) {
@@ -168,7 +178,11 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
                 Text("SETUP", style = MaterialTheme.typography.labelMedium, color = CyanPrimary)
                 SetupRow("AI provider", if (configured) "${config.provider.displayName} · ${config.modelName}" else "Add your API key to ask questions", configured, if (configured) "Edit" else "Configure", onOpenSettingsRequested)
                 SetupRow("Display over apps", if (hasPermission) "Permission granted" else "Needed for the floating bubble", hasPermission, if (hasPermission) "Manage" else "Grant", ::permission)
-                Text("Images are sent to your selected AI provider only when you send a question. Screen capture asks for Android’s permission each time.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SetupRow("Screen access", if (sharing) "Active while you switch apps" else "Approve once for this session", sharing, if (sharing) "Stop" else "Enable", {
+                    if (sharing) context.stopService(Intent(context, com.example.service.MediaProjectionService::class.java))
+                    else startOverApps(captureWhenReady = false)
+                })
+                Text("Tap the bubble to select a screen region. Hold it to open chat. Images are sent to your selected AI provider only when you send a question.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val error by OverlayStateManager.errorMessage.collectAsState()
                 if (error != null) Text(error.orEmpty(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }

@@ -14,6 +14,8 @@ import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
+import android.view.KeyEvent
+import android.widget.FrameLayout
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -24,7 +26,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -35,6 +40,8 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.example.util.OverlayGeometry
 import com.example.util.PanelBounds
 import com.example.MainActivity
+import com.example.ui.components.ScreenSelectorView
+import com.example.util.BitmapUtils
 import com.example.ui.components.FloatingBubbleView
 import com.example.ui.components.OverlayPanelView
 import com.example.ui.screens.ScreenCaptureActivity
@@ -44,6 +51,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.onEach
@@ -61,6 +71,10 @@ class OverlayService : Service() {
     private var panelView: ComposeView? = null
     private var panelParams: WindowManager.LayoutParams? = null
 
+    private var selectorWindow: FrameLayout? = null
+    private var selectorCompose: ComposeView? = null
+    private var selectorParams: WindowManager.LayoutParams? = null
+
     private val layoutPrefs by lazy { getSharedPreferences("peek_overlay_layout", MODE_PRIVATE) }
     private var preferredPanel: PanelBounds? = null
     private var keyboardInset = 0
@@ -72,6 +86,7 @@ class OverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        active = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
 
@@ -99,6 +114,10 @@ class OverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CAPTURE) {
+            val delayMs = intent.getLongExtra("capture_delay", 0L)
+            scope.launch { delay(delayMs); requestScreenCapture() }
+        }
         if (intent?.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY
@@ -133,6 +152,7 @@ class OverlayService : Service() {
         }
 
         bubbleView = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setViewTreeLifecycleOwner(owner)
             setViewTreeSavedStateRegistryOwner(owner)
             setViewTreeViewModelStoreOwner(owner)
@@ -140,7 +160,8 @@ class OverlayService : Service() {
             setContent {
                 PeekTheme {
                     FloatingBubbleView(
-                        onClick = { OverlayStateManager.togglePanel() },
+                        onClick = { requestScreenCapture() },
+                        onLongClick = { OverlayStateManager.setPanelExpanded(true) },
                         onDrag = { dx, dy -> moveBubble(dx, dy) },
                         onDragEnd = { snapBubble() }
                     )
@@ -183,6 +204,7 @@ class OverlayService : Service() {
         }
 
         panelView = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setViewTreeLifecycleOwner(owner)
             setViewTreeSavedStateRegistryOwner(owner)
             setViewTreeViewModelStoreOwner(owner)
@@ -204,13 +226,8 @@ class OverlayService : Service() {
                         onMove = { dx, dy -> changePanel(dx, dy, resize = false) },
                         onResize = { dx, dy -> changePanel(dx, dy, resize = true) },
                         onGeometryChanged = { savePanelBounds() },
-                        onCropImageRequested = { ScreenSelectorActivity.cropCurrentImage(this@OverlayService) },
-                        onCaptureScreenRequested = {
-                            val intent = Intent(this@OverlayService, ScreenCaptureActivity::class.java).apply {
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            startActivity(intent)
-                        },
+                        onCropImageRequested = { cropImage() },
+                        onCaptureScreenRequested = { requestScreenCapture() },
                         onPickImageRequested = {
                             OverlayStateManager.setPanelExpanded(false)
                             val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
@@ -235,6 +252,55 @@ class OverlayService : Service() {
                 }
             }
         }
+        selectorCompose = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+            setViewTreeViewModelStoreOwner(owner)
+            setContent {
+                val bitmap by OverlayStateManager.capturedScreenToCrop.collectAsState()
+                PeekTheme {
+                    bitmap?.let { screenshot ->
+                        ScreenSelectorView(screenshot, onSelectionConfirmed = { rect ->
+                            val version = OverlayStateManager.captureVersion
+                            scope.launch {
+                                try {
+                                    val crop = withContext(Dispatchers.Default) { BitmapUtils.crop(screenshot, rect) }
+                                    if (OverlayStateManager.isCapturing.value && OverlayStateManager.captureVersion == version) {
+                                        OverlayStateManager.setCurrentImage(crop)
+                                        OverlayStateManager.finishCapture()
+                                    } else if (crop !== screenshot) crop.recycle()
+                                } catch (e: Exception) {
+                                    if (OverlayStateManager.captureVersion == version) {
+                                        OverlayStateManager.setErrorMessage("Could not crop selection: ${e.localizedMessage}")
+                                        OverlayStateManager.finishCapture()
+                                    }
+                                }
+                            }
+                        }, onCancel = { OverlayStateManager.finishCapture(showPanel = false) })
+                    }
+                }
+            }
+        }
+        selectorWindow = object : FrameLayout(this) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                    if (event.action == KeyEvent.ACTION_UP) OverlayStateManager.finishCapture(showPanel = false)
+                    return true
+                }
+                return super.dispatchKeyEvent(event)
+            }
+        }.apply {
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+            setViewTreeViewModelStoreOwner(owner)
+            addView(selectorCompose, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+        selectorParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            layoutFlag, WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
         panelView?.let { view ->
             ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
                 val inset = (insets.getInsets(WindowInsetsCompat.Type.ime()).bottom -
@@ -312,37 +378,47 @@ class OverlayService : Service() {
         moveBubble(0f, 0f)
     }
 
+    private fun requestScreenCapture() {
+        if (OverlayStateManager.isCapturing.value) return
+        if (!OverlayStateManager.isScreenSharing.value) {
+            ScreenCaptureActivity.launch(this)
+            return
+        }
+        if (!OverlayStateManager.beginCapture()) return
+        if (!MediaProjectionService.requestFrame()) {
+            OverlayStateManager.finishCapture()
+            OverlayStateManager.setErrorMessage("Screen access ended. Tap Capture to reconnect.")
+        }
+    }
+
+    private fun cropImage() {
+        val bitmap = OverlayStateManager.currentImage.value ?: return
+        if (OverlayStateManager.beginCapture()) OverlayStateManager.setCapturedScreenToCrop(bitmap)
+    }
+
     private fun observeState() {
-        combine(OverlayStateManager.isPanelExpanded, OverlayStateManager.isCapturing) { expanded, capturing ->
-            expanded to capturing
-        }.onEach { (expanded, capturing) ->
+        combine(OverlayStateManager.isPanelExpanded, OverlayStateManager.isCapturing, OverlayStateManager.capturedScreenToCrop) { expanded, capturing, bitmap ->
+            Triple(expanded, capturing, bitmap)
+        }.onEach { (expanded, capturing, bitmap) ->
+            fun hide(view: View?) { if (view?.isAttachedToWindow == true) runCatching { windowManager.removeView(view) } }
             if (capturing) {
-                if (bubbleView?.isAttachedToWindow == true) runCatching { windowManager.removeView(bubbleView) }
-                if (panelView?.isAttachedToWindow == true) runCatching { windowManager.removeView(panelView) }
+                hide(bubbleView); hide(panelView)
+                if (bitmap != null && selectorWindow?.isAttachedToWindow == false) {
+                    runCatching { windowManager.addView(selectorWindow, selectorParams) }.onFailure {
+                        OverlayStateManager.setErrorMessage("Could not show region selection: ${it.localizedMessage}")
+                        OverlayStateManager.finishCapture()
+                    }
+                } else if (bitmap == null) hide(selectorWindow)
                 return@onEach
             }
-            if (expanded) {
-                // Show panel, hide bubble
-                if (bubbleView?.isAttachedToWindow == true) {
-                    runCatching { windowManager.removeView(bubbleView) }
-                }
-                if (panelView?.isAttachedToWindow == false) {
-                    updatePanelBounds()
-                    runCatching { windowManager.addView(panelView, panelParams) }.onFailure {
-                        OverlayStateManager.setErrorMessage("Could not display Peek. Check overlay permission.")
-                        stopSelf()
-                    }
-                }
-            } else {
-                // Show bubble, hide panel
-                if (panelView?.isAttachedToWindow == true) {
-                    runCatching { windowManager.removeView(panelView) }
-                }
-                if (bubbleView?.isAttachedToWindow == false) {
-                    runCatching { windowManager.addView(bubbleView, bubbleParams) }.onFailure {
-                        OverlayStateManager.setErrorMessage("Could not display Peek. Check overlay permission.")
-                        stopSelf()
-                    }
+            hide(selectorWindow)
+            val view = if (expanded) panelView else bubbleView
+            hide(if (expanded) bubbleView else panelView)
+            if (view?.isAttachedToWindow == false) {
+                if (expanded) updatePanelBounds()
+                runCatching { windowManager.addView(view, if (expanded) panelParams else bubbleParams) }.onFailure {
+                    OverlayStateManager.setErrorMessage("Could not display Peek. Check overlay permission.")
+                    stopSelf()
                 }
             }
         }.launchIn(scope)
@@ -386,7 +462,7 @@ class OverlayService : Service() {
 
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("Peek AI Overlay Active")
-            .setContentText("Tap to open Peek or use the floating bubble")
+            .setContentText("Tap the bubble to select a region. Hold it to open chat.")
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentIntent(pendingOpen)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Overlay", pendingStop)
@@ -397,15 +473,20 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (active === this) active = null
+        stopService(Intent(this, MediaProjectionService::class.java))
         OverlayStateManager.setServiceRunning(false)
         OverlayStateManager.setPanelExpanded(false)
         OverlayStateManager.cancelRequest()
         if (OverlayStateManager.isCapturing.value) {
-            stopService(Intent(this, MediaProjectionService::class.java))
-            OverlayStateManager.finishCapture()
+            OverlayStateManager.finishCapture(showPanel = false)
         }
 
         scope.cancel()
+        if (selectorWindow?.isAttachedToWindow == true) runCatching { windowManager.removeView(selectorWindow) }
+        selectorCompose?.disposeComposition()
+        panelView?.disposeComposition()
+        bubbleView?.disposeComposition()
         lifecycleOwner?.onDestroy()
 
         runCatching {
@@ -421,6 +502,25 @@ class OverlayService : Service() {
     }
 
     companion object {
+        private var active: OverlayService? = null
+        private const val ACTION_CAPTURE = "com.example.overlay.CAPTURE"
+
+        fun captureScreen(context: Context, delayMs: Long = 0) {
+            val service = active
+            if (service != null) {
+                service.scope.launch { delay(delayMs); service.requestScreenCapture() }
+            } else {
+                val intent = Intent(context, OverlayService::class.java).setAction(ACTION_CAPTURE).putExtra("capture_delay", delayMs)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
+            }
+        }
+
+        fun cropCurrentImage(context: Context): Boolean {
+            val service = active ?: return false
+            service.cropImage()
+            return true
+        }
+
         const val ACTION_STOP = "com.example.service.action.STOP"
 
         fun start(context: Context) {

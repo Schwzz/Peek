@@ -1,10 +1,6 @@
 package com.example.service
 
-import android.app.Activity
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
+import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -13,140 +9,124 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.IntentCompat
-import com.example.ui.screens.ScreenSelectorActivity
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 
+/** Owns screen permission independently of every Activity and of individual screenshots. */
 class MediaProjectionService : Service() {
-
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var source: ScreenCaptureHelper? = null
+    private var captureJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
-        promoteToForeground()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Peek screen access", NotificationManager.IMPORTANCE_LOW)
+            )
+        }
+        OverlayStateManager.isCapturing.onEach { if (!it) captureJob?.cancel() }.launchIn(scope)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        promoteToForeground()
-
-        if (intent == null) {
+        if (intent == null || intent.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY
         }
-
-        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
-        val data: Intent? = IntentCompat.getParcelableExtra(intent, EXTRA_DATA, Intent::class.java)
-
-        if (resultCode == Activity.RESULT_OK && data != null) {
-            scope.launch {
-                try {
-                    val mediaProjectionManager =
-                        getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                    val mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
-
-                    if (mediaProjection != null) {
-                        val bitmap = ScreenCaptureHelper.captureVirtualDisplay(
-                            this@MediaProjectionService,
-                            mediaProjection
-                        )
-                        if (bitmap != null) {
-                            if (OverlayStateManager.isCapturing.value) OverlayStateManager.setCapturedScreenToCrop(bitmap)
-                            else bitmap.recycle()
-                        } else {
-                            OverlayStateManager.setErrorMessage("Failed to capture screen buffer. Please try again.")
-                            OverlayStateManager.finishCapture()
-                        }
-                    } else {
-                        OverlayStateManager.setErrorMessage("MediaProjection could not be initialized.")
-                        OverlayStateManager.finishCapture()
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    OverlayStateManager.setErrorMessage("Capture error: ${e.message}")
-                    OverlayStateManager.finishCapture()
-                } finally {
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                }
+        if (source != null) return START_NOT_STICKY
+        val code = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
+        val data = IntentCompat.getParcelableExtra(intent, EXTRA_DATA, Intent::class.java)
+        if (code != Activity.RESULT_OK || data == null) {
+            OverlayStateManager.setStartingScreenSharing(false)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        try {
+            val stop = PendingIntent.getService(this, 2, Intent(this, MediaProjectionService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .setContentTitle("Peek screen access is active")
+                .setContentText("Tap the bubble to select a region. Hold it to open chat.")
+                .setOngoing(true).addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop screen access", stop).build()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            else startForeground(NOTIFICATION_ID, notification)
+            val projection = (getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager).getMediaProjection(code, data)
+                ?: error("Android did not grant screen access.")
+            source = ScreenCaptureHelper(this, projection) { stopSelf() }
+            active = this
+            OverlayStateManager.setScreenSharing(true)
+            OverlayStateManager.setStartingScreenSharing(false)
+            OverlayStateManager.setStatusMessage("Ready over other apps. Tap the bubble to select; hold it for chat.")
+            if (intent.getBooleanExtra(EXTRA_CAPTURE_WHEN_READY, false)) {
+                scope.launch { delay(400); OverlayService.captureScreen(this@MediaProjectionService) }
             }
-        } else {
-            OverlayStateManager.finishCapture()
-            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (e: Exception) {
+            OverlayStateManager.setErrorMessage("Could not enable screen access: ${e.localizedMessage}")
+            OverlayStateManager.setStartingScreenSharing(false)
             stopSelf()
         }
-
         return START_NOT_STICKY
     }
 
-    private fun promoteToForeground() {
-        val notification = createNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Screen Capture Service",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Capturing screen for region analysis"
-                setShowBadge(false)
+    private fun captureRegion() {
+        val session = source ?: return
+        if (captureJob?.isActive == true) return
+        val version = OverlayStateManager.captureVersion
+        val requestedAt = OverlayStateManager.captureRequestedAt
+        captureJob = scope.launch {
+            try {
+                val bitmap = session.capture(requestedAt)
+                if (OverlayStateManager.isCapturing.value && OverlayStateManager.captureVersion == version)
+                    OverlayStateManager.setCapturedScreenToCrop(bitmap)
+                else bitmap.recycle()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (OverlayStateManager.captureVersion == version) {
+                    OverlayStateManager.setErrorMessage("Could not capture this screen: ${e.localizedMessage}")
+                    OverlayStateManager.finishCapture(showPanel = true)
+                }
             }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            // Screen sharing remains active after success, cancellation, or a failed screenshot.
         }
-    }
-
-    private fun createNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Peek Screen Capture")
-            .setContentText("Capturing screen for region analysis")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
     }
 
     override fun onDestroy() {
-        super.onDestroy()
+        if (active === this) active = null
+        captureJob?.cancel()
+        source?.close(); source = null
+        OverlayStateManager.setScreenSharing(false)
+        OverlayStateManager.setStartingScreenSharing(false)
+        if (OverlayStateManager.isCapturing.value) OverlayStateManager.finishCapture(showPanel = false)
+        OverlayStateManager.setStatusMessage("Screen access stopped. Tap the bubble to reconnect.")
         scope.cancel()
-        if (OverlayStateManager.capturedScreenToCrop.value == null && OverlayStateManager.isCapturing.value) {
-            OverlayStateManager.finishCapture()
-        }
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        super.onDestroy()
     }
 
     companion object {
         private const val CHANNEL_ID = "peek_capture_channel"
         private const val NOTIFICATION_ID = 2002
-        private const val EXTRA_RESULT_CODE = "extra_result_code"
-        private const val EXTRA_DATA = "extra_data"
+        const val ACTION_STOP = "com.example.capture.STOP"
+        private const val EXTRA_RESULT_CODE = "result_code"
+        private const val EXTRA_DATA = "consent_data"
+        private const val EXTRA_CAPTURE_WHEN_READY = "capture_when_ready"
+        private var active: MediaProjectionService? = null
 
-        fun startCapture(context: Context, resultCode: Int, data: Intent) {
-            val intent = Intent(context, MediaProjectionService::class.java).apply {
-                putExtra(EXTRA_RESULT_CODE, resultCode)
-                putExtra(EXTRA_DATA, data)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+        fun requestFrame(): Boolean {
+            val service = active ?: return false
+            if (service.source == null) return false
+            service.captureRegion()
+            return true
+        }
+
+        fun startSession(context: Context, resultCode: Int, data: Intent, captureWhenReady: Boolean) {
+            val intent = Intent(context, MediaProjectionService::class.java)
+                .putExtra(EXTRA_RESULT_CODE, resultCode).putExtra(EXTRA_DATA, data)
+                .putExtra(EXTRA_CAPTURE_WHEN_READY, captureWhenReady)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
         }
     }
 }

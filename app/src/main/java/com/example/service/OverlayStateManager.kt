@@ -32,15 +32,29 @@ object OverlayStateManager {
     private val _isCapturing = MutableStateFlow(false)
     val isCapturing: StateFlow<Boolean> = _isCapturing.asStateFlow()
 
+    private val _isScreenSharing = MutableStateFlow(false)
+    val isScreenSharing: StateFlow<Boolean> = _isScreenSharing.asStateFlow()
+    fun setScreenSharing(active: Boolean) { _isScreenSharing.value = active }
+    private val _isStartingScreenSharing = MutableStateFlow(false)
+    val isStartingScreenSharing: StateFlow<Boolean> = _isStartingScreenSharing.asStateFlow()
+    fun setStartingScreenSharing(starting: Boolean) { _isStartingScreenSharing.value = starting }
+    var captureVersion = 0L
+        private set
+    var captureRequestedAt = 0L
+        private set
+
     fun beginCapture(): Boolean {
         if (_isCapturing.value) return false
+        captureVersion++
+        captureRequestedAt = System.nanoTime() / 1_000_000
         _isCapturing.value = true
         return true
     }
 
-    fun finishCapture() {
+    fun finishCapture(showPanel: Boolean = true) {
+        captureVersion++
         _capturedScreenToCrop.value = null
-        _isPanelExpanded.value = true
+        _isPanelExpanded.value = showPanel
         _isCapturing.value = false
     }
 

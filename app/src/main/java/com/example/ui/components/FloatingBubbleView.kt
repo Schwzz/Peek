@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
@@ -33,10 +35,12 @@ import com.example.service.OverlayStateManager
 import com.example.ui.theme.CyanPrimary
 import com.example.ui.theme.DarkNavySurface
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FloatingBubbleView(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     onDrag: (Float, Float) -> Unit = { _, _ -> },
     onDragEnd: () -> Unit = {}
 ) {
@@ -62,7 +66,7 @@ fun FloatingBubbleView(
                     change.consume(); onDrag(amount.x, amount.y)
                 }
             }
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .testTag("floating_bubble_button"),
         contentAlignment = Alignment.Center
     ) {
@@ -88,7 +92,7 @@ fun FloatingBubbleView(
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Default.Visibility,
-                    contentDescription = "Peek Floating Bubble",
+                    contentDescription = "Peek: tap to select screen, hold for chat",
                     tint = CyanPrimary,
                     modifier = Modifier.size(28.dp)
                 )

@@ -36,6 +36,8 @@
         <activity
             android:name=".ui.screens.ScreenCaptureActivity"
             android:exported="false"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
             android:theme="@style/Theme.Transparent" />
 
         <activity
