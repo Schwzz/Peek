@@ -70,6 +70,9 @@ class CaptureFlowInstrumentedTest {
     }
 
     @Test fun switchingAppsAndRepeatedRegionCapturesKeepTheSameSessionAlive() {
+        instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
+            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
         device.executeShellCommand("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
         var scenario: ActivityScenario<MainActivity>? = null
         val configRepo = ApiConfigRepository.getInstance(context)
@@ -120,12 +123,17 @@ class CaptureFlowInstrumentedTest {
                     server.enqueue(MockResponse().setBody("""{"message":{"content":"Local image response received"}}"""))
                     click(By.clazz("android.widget.EditText"))
                     device.waitForIdle()
+                    awaitState("The keyboard did not appear") {
+                        instrumentation.uiAutomation.windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+                    }
                     val keyboard = checkNotNull(instrumentation.uiAutomation.windows.firstOrNull {
                         it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
                     }) { "The keyboard did not appear" }
                     val keyboardBounds = android.graphics.Rect().also { keyboard.getBoundsInScreen(it) }
                     val inputBounds = checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)).visibleBounds
                     val sendBounds = checkNotNull(device.wait(Until.findObject(By.desc("Send question")), 5000)).visibleBounds
+                    assertFalse("Composer has no visible bounds", inputBounds.isEmpty)
+                    assertFalse("Send has no visible bounds", sendBounds.isEmpty)
                     assertTrue("Keyboard covered the composer: $inputBounds vs $keyboardBounds", inputBounds.bottom <= keyboardBounds.top)
                     assertTrue("Keyboard covered Send: $sendBounds vs $keyboardBounds", sendBounds.bottom <= keyboardBounds.top)
                     checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)).text = "Describe this selection"
