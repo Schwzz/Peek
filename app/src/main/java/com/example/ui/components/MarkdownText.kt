@@ -57,7 +57,7 @@ private fun MarkdownBlocks(parent: Node, depth: Int = 0) {
                         }
                     }
                 }
-                node is BlockQuote -> Box(Modifier.background(Color(0xFF1E293B), RoundedCornerShape(8.dp)).padding(10.dp)) { MarkdownBlocks(node, depth + 1) }
+                node is BlockQuote -> Box(Modifier.background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)).padding(10.dp)) { MarkdownBlocks(node, depth + 1) }
                 node is ThematicBreak -> HorizontalDivider()
                 node is HtmlBlock -> Text(node.literal, style = MaterialTheme.typography.bodyMedium)
                 else -> MarkdownBlocks(node, depth + 1)
@@ -66,12 +66,12 @@ private fun MarkdownBlocks(parent: Node, depth: Int = 0) {
     }
 }
 
-private fun inlineText(parent: Node): AnnotatedString = buildAnnotatedString {
+private fun inlineText(parent: Node, linkColor: Color = Color.Unspecified): AnnotatedString = buildAnnotatedString {
     fun visit(node: Node, depth: Int = 0) {
         if (depth > 24) return
         when (node) {
             is org.commonmark.node.Text -> append(node.literal)
-            is Code -> { pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = Color(0xFF263348))); append(node.literal); pop() }
+            is Code -> { pushStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = Color.Gray.copy(alpha = 0.15f))); append(node.literal); pop() }
             is SoftLineBreak -> append(" ")
             is HardLineBreak -> append("\n")
             is HtmlInline -> append(node.literal)
@@ -79,7 +79,7 @@ private fun inlineText(parent: Node): AnnotatedString = buildAnnotatedString {
             is Emphasis -> { pushStyle(SpanStyle(fontStyle = FontStyle.Italic)); children(node).forEach { visit(it, depth + 1) }; pop() }
             is Link -> {
                 pushStringAnnotation("url", node.destination)
-                pushStyle(SpanStyle(color = Color(0xFF67E8F9)))
+                pushStyle(SpanStyle(color = linkColor))
                 children(node).forEach { visit(it, depth + 1) }
                 pop(); pop()
             }
@@ -92,7 +92,8 @@ private fun inlineText(parent: Node): AnnotatedString = buildAnnotatedString {
 @Composable
 private fun MarkdownInline(node: Node) {
     val uriHandler = LocalUriHandler.current
-    val content = remember(node) { inlineText(node) }
+    val linkColor = MaterialTheme.colorScheme.primary
+    val content = remember(node, linkColor) { inlineText(node, linkColor) }
     ClickableText(content, style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface), onClick = { offset ->
         content.getStringAnnotations("url", offset, offset).firstOrNull()?.item?.let { url ->
             if (url.startsWith("https://") || url.startsWith("http://")) runCatching { uriHandler.openUri(url) }
@@ -103,7 +104,7 @@ private fun MarkdownInline(node: Node) {
 @Composable
 private fun CodeBlock(code: String, language: String) {
     val context = LocalContext.current
-    Surface(color = Color(0xFF070D18), shape = RoundedCornerShape(10.dp)) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(10.dp)) {
         Column(Modifier.fillMaxWidth().padding(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(language.ifBlank { "code" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

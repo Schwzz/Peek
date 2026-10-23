@@ -15,8 +15,9 @@ import java.util.concurrent.TimeUnit
 
 class OpenAiVisionService(
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .followRedirects(false).followSslRedirects(false)
         .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 ) : VisionAiService {
@@ -29,25 +30,14 @@ class OpenAiVisionService(
         apiKey: String
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            if (apiKey.isBlank()) {
+            if (apiKey.isBlank() && config.provider.requiresApiKey) {
                 return@withContext Result.failure(
                     IllegalArgumentException("API key is missing. Please configure it in Settings.")
                 )
             }
 
-            var baseUrl = config.baseUrl.trim()
-            if (!baseUrl.endsWith("/")) {
-                baseUrl += "/"
-            }
-            val endpoint = if (baseUrl.endsWith("chat/completions/")) {
-                baseUrl.removeSuffix("/")
-            } else if (baseUrl.endsWith("chat/completions")) {
-                baseUrl
-            } else {
-                "${baseUrl}chat/completions"
-            }
-
-            val model = config.modelName.ifBlank { VisionAiProvider.OPENAI_COMPATIBLE.defaultModel }
+            val model = config.modelName.trim()
+            require(model.isNotBlank()) { "Choose a model in Models first." }
             val messagesArray = JSONArray()
 
             // Include prior chat history
@@ -98,9 +88,7 @@ class OpenAiVisionService(
             val requestBody = rootJson.toString()
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
 
-            val request = Request.Builder()
-                .url(endpoint)
-                .addHeader("Authorization", "Bearer $apiKey")
+            val request = ProviderEndpoints.request(config, apiKey, "chat/completions")
                 .post(requestBody)
                 .build()
 
@@ -122,10 +110,15 @@ class OpenAiVisionService(
 
             val firstChoice = choices.getJSONObject(0)
             val message = firstChoice.optJSONObject("message")
-            val content = message?.optString("content", "")?.trim().orEmpty()
+            val value = message?.opt("content")
+            val content = when (value) {
+                is String -> value.trim()
+                is JSONArray -> (0 until value.length()).mapNotNull { value.optJSONObject(it)?.opt("text") as? String }.joinToString("\n").trim()
+                else -> ""
+            }
 
             if (content.isEmpty()) {
-                Result.failure(Exception("API returned an empty message."))
+                Result.failure(Exception((message?.opt("refusal") as? String)?.takeIf { it.isNotBlank() } ?: "The model returned no answer. Try another model or a shorter prompt."))
             } else {
                 Result.success(content)
             }

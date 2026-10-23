@@ -180,14 +180,21 @@ class OverlayService : Service() {
 
         // 2. Setup Overlay Panel - bound strictly to the panel's dimensions so taps outside reach underlying app
         val displayMetrics = resources.displayMetrics
-        val panelWidth = (layoutPrefs.getFloat("panel_width_dp", 380f) * displayMetrics.density).toInt()
-        val panelHeight = (layoutPrefs.getFloat("panel_height_dp", 640f) * displayMetrics.density).toInt()
+        val migrateToolkit = !layoutPrefs.getBoolean("toolkit_layout_v2", false)
+        val widthDp = layoutPrefs.getFloat("panel_width_dp", 320f).let { if (migrateToolkit) it.coerceAtMost(320f) else it }
+        val heightDp = layoutPrefs.getFloat("panel_height_dp", 440f).let { if (migrateToolkit) it.coerceAtMost(440f) else it }
+        val panelWidth = (widthDp * displayMetrics.density).toInt()
+        val panelHeight = (heightDp * displayMetrics.density).toInt()
         preferredPanel = OverlayGeometry.clampPanel(PanelBounds(
-            (layoutPrefs.getFloat("panel_x", 0.04f) * displayMetrics.widthPixels).toInt(),
+            (layoutPrefs.getFloat("panel_x", ((displayMetrics.widthPixels - panelWidth) / displayMetrics.widthPixels.toFloat()).coerceAtLeast(0f)) * displayMetrics.widthPixels).toInt(),
             (layoutPrefs.getFloat("panel_y", 0.10f) * displayMetrics.heightPixels).toInt(),
             panelWidth, panelHeight
         ), displayMetrics.widthPixels, displayMetrics.heightPixels, displayMetrics.density)
 
+        if (migrateToolkit) {
+            savePanelBounds()
+            layoutPrefs.edit().putBoolean("toolkit_layout_v2", true).apply()
+        }
         panelParams = WindowManager.LayoutParams(
             preferredPanel!!.width,
             preferredPanel!!.height,

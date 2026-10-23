@@ -214,25 +214,25 @@ fun ScreenSelectorView(
                 val oneThirdW = rectW / 3f
                 val oneThirdH = rectH / 3f
                 drawLine(
-                    color = Color(0x6600E5FF),
+                    color = Color(0x66D2BC91),
                     start = Offset(l + oneThirdW, t),
                     end = Offset(l + oneThirdW, b),
                     strokeWidth = 1.5f
                 )
                 drawLine(
-                    color = Color(0x6600E5FF),
+                    color = Color(0x66D2BC91),
                     start = Offset(l + oneThirdW * 2, t),
                     end = Offset(l + oneThirdW * 2, b),
                     strokeWidth = 1.5f
                 )
                 drawLine(
-                    color = Color(0x6600E5FF),
+                    color = Color(0x66D2BC91),
                     start = Offset(l, t + oneThirdH),
                     end = Offset(r, t + oneThirdH),
                     strokeWidth = 1.5f
                 )
                 drawLine(
-                    color = Color(0x6600E5FF),
+                    color = Color(0x66D2BC91),
                     start = Offset(l, t + oneThirdH * 2),
                     end = Offset(r, t + oneThirdH * 2),
                     strokeWidth = 1.5f
@@ -258,12 +258,12 @@ fun ScreenSelectorView(
                     .align(Alignment.TopCenter)
                     .statusBarsPadding()
                     .padding(16.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xDD0F172A),
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xEE20201F),
                 shadowElevation = 8.dp
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    Text("Select a region", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                    Text("Select a region", style = MaterialTheme.typography.titleSmall, color = Color.White)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         TextButton(modifier = Modifier.width(44.dp), onClick = { zoom = (zoom / 1.5f).coerceAtLeast(1f); if (zoom == 1f) pan = Offset.Zero }) { Text("−", color = CyanPrimary) }
                         Text("${(zoom * 100).toInt()}%", color = Color.White)
@@ -275,7 +275,7 @@ fun ScreenSelectorView(
                             rectRight = fit.left + fit.width; rectBottom = fit.top + fit.height
                         }, modifier = Modifier.testTag("select_fullscreen_button")) { Text("Full", color = CyanPrimary) }
                     }
-                    Text(if (panMode) "Drag the image. Tap Select to adjust the region." else "Drag a region or adjust its corners. Use + for detail.", style = MaterialTheme.typography.bodySmall, color = Color(0xFF94A3B8))
+                    Text(if (panMode) "Drag the image. Tap Select to adjust the region." else "Drag to select. Adjust the corners for detail.", style = MaterialTheme.typography.bodySmall, color = Color(0xFFB5B3AA))
                 }
             }
 
@@ -286,8 +286,8 @@ fun ScreenSelectorView(
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(16.dp),
-                shape = RoundedCornerShape(20.dp),
-                color = Color(0xDD0F172A),
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xEE20201F),
                 shadowElevation = 12.dp
             ) {
                 Row(
@@ -299,6 +299,8 @@ fun ScreenSelectorView(
                 ) {
                     OutlinedButton(
                         onClick = onCancel,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                        shape = RoundedCornerShape(6.dp),
                         modifier = Modifier
                             .weight(1f)
                             .testTag("cancel_crop_button")
@@ -320,6 +322,7 @@ fun ScreenSelectorView(
                             onSelectionConfirmed(cropRect)
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CyanPrimary),
+                        shape = RoundedCornerShape(6.dp),
                         enabled = kotlin.math.abs(rectRight - rectLeft) >= 2f && kotlin.math.abs(rectBottom - rectTop) >= 2f &&
                             max(rectLeft, rectRight) > transform.left && min(rectLeft, rectRight) < transform.left + transform.width &&
                             max(rectTop, rectBottom) > transform.top && min(rectTop, rectBottom) < transform.top + transform.height,
@@ -330,10 +333,10 @@ fun ScreenSelectorView(
                         Icon(
                             imageVector = Icons.Default.Check,
                             contentDescription = "Confirm",
-                            tint = Color(0xFF00363F)
+                            tint = Color(0xFF30291D)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Use selection", color = Color(0xFF00363F))
+                        Text("Use selection", color = Color(0xFF30291D))
                     }
                 }
             }

@@ -162,6 +162,11 @@ object OverlayStateManager {
     }
 
     fun sendPrompt(prompt: String, context: Context): Boolean {
+        val configRepo = com.example.data.api.ApiConfigRepository.getInstance(context)
+        if (!configRepo.isConfigured()) {
+            _errorMessage.value = "Choose a model and configure its connection in Models first."
+            return false
+        }
         val repository = VisionAiRepository.getInstance(context.applicationContext)
         return sendPrompt(prompt) { image, text, history -> repository.analyzeImage(image, text, history) }
     }
@@ -220,7 +225,7 @@ object OverlayStateManager {
                         _errorMessage.value = errorText
                         _chatMessages.value = _chatMessages.value + ChatMessage(
                             sender = MessageSender.AI,
-                            text = "⚠️ $errorText",
+                            text = errorText,
                             isError = true
                         )
                         _statusMessage.value = "Error occurred."

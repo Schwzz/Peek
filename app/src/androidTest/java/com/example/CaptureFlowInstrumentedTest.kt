@@ -13,6 +13,14 @@ import androidx.test.uiautomator.Until
 import com.example.service.MediaProjectionService
 import com.example.service.OverlayService
 import com.example.service.OverlayStateManager
+import com.example.data.api.ApiConfig
+import com.example.data.api.ApiConfigRepository
+import com.example.data.api.VisionAiProvider
+import com.example.model.MessageSender
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
@@ -64,7 +72,11 @@ class CaptureFlowInstrumentedTest {
     @Test fun switchingAppsAndRepeatedRegionCapturesKeepTheSameSessionAlive() {
         device.executeShellCommand("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
         var scenario: ActivityScenario<MainActivity>? = null
+        val configRepo = ApiConfigRepository.getInstance(context)
+        val originalConfig = configRepo.getConfig()
+        val server = MockWebServer().apply { start() }
         try {
+            configRepo.saveConfig(ApiConfig(VisionAiProvider.OLLAMA, baseUrl = server.url("/").toString(), modelName = "test-vision", supportsImages = true))
             if (android.os.Build.VERSION.SDK_INT >= 33) {
                 instrumentation.uiAutomation.grantRuntimePermission(context.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
             }
@@ -99,6 +111,28 @@ class CaptureFlowInstrumentedTest {
                     }
                     assertOtherAppRemainsResumed()
                     assertTrue("Finishing a screenshot stopped projection", OverlayStateManager.isScreenSharing.value)
+                    // Exercise Android cleartext policy, the optional-key local connection,
+                    // actual cropped JPEG payload, and the answer in a service-owned window.
+                    server.enqueue(MockResponse().setBody("""{"message":{"content":"Local image response received"}}"""))
+                    click(By.clazz("android.widget.EditText"))
+                    device.waitForIdle()
+                    checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)).text = "Describe this selection"
+                    click(By.desc("Send question"))
+                    awaitState("The local model answer never reached chat") {
+                        OverlayStateManager.chatMessages.value.any { it.sender == MessageSender.AI && it.text == "Local image response received" }
+                    }
+                    val request = checkNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+                    assertEquals("/api/chat", request.path)
+                    assertNull(request.getHeader("Authorization"))
+                    val payload = JSONObject(request.body.readUtf8())
+                    assertFalse(payload.getBoolean("stream"))
+                    assertEquals("test-vision", payload.getString("model"))
+                    val encoded = payload.getJSONArray("messages").getJSONObject(0).getJSONArray("images").getString(0)
+                    val jpeg = android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+                    val decoded = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
+                    assertNotNull(decoded)
+                    decoded?.recycle()
+                    assertOtherAppRemainsResumed()
                     evidence("answer-panel")
                     click(By.desc("Minimize to bubble"))
                 } else {
@@ -117,6 +151,8 @@ class CaptureFlowInstrumentedTest {
             scenario?.close()
             context.stopService(Intent(context, MediaProjectionService::class.java))
             context.stopService(Intent(context, OverlayService::class.java))
+            configRepo.saveConfig(originalConfig)
+            server.shutdown()
         }
     }
 }

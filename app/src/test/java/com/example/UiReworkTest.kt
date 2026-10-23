@@ -61,6 +61,35 @@ class UiReworkTest {
         ui.onNodeWithTag("overlay_prompt_input").assertTextContains("Keep this draft")
     }
 
+    @Test fun modelSettingsKeepLocalAndCloudDraftsSeparate() {
+        val repo = com.example.data.api.ApiConfigRepository.getInstance(ui.activity)
+        repo.saveConfig(com.example.data.api.ApiConfig(modelName = "cloud-test"))
+        ui.setContent { PeekTheme { com.example.ui.screens.SettingsDialog(onDismiss = {}) } }
+        screenshot("model-settings")
+        ui.onNodeWithTag("provider_picker").performClick()
+        ui.onNodeWithTag("provider_ollama_tab").performScrollTo().performClick()
+        ui.onNodeWithTag("api_key_input").assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
+        ui.onNodeWithTag("base_url_input").performTextReplacement("http://192.168.1.8:11434/")
+        ui.onNodeWithTag("model_name_input").performScrollTo().performTextReplacement("local-vision")
+        screenshot("local-model-settings")
+        ui.onNodeWithTag("save_settings_button").performClick()
+        ui.runOnIdle {
+            Assert.assertEquals(com.example.data.api.VisionAiProvider.OLLAMA, repo.getConfig().provider)
+            Assert.assertEquals("local-vision", repo.getConfig().modelName)
+            Assert.assertEquals("cloud-test", repo.getConfig(com.example.data.api.VisionAiProvider.GEMINI).modelName)
+        }
+    }
+
+    @Test fun darkThemeKeepsTheToolkitReadable() {
+        ui.setContent { PeekTheme(darkTheme = true) { OverlayPanelView(
+            modifier = Modifier.fillMaxSize(), onCaptureScreenRequested = {}, onPickImageRequested = {},
+            onMinimizeRequested = {}, onCloseRequested = {}, onOpenSettingsRequested = {}
+        ) } }
+        ui.onNodeWithTag("overlay_model_picker").assertIsDisplayed()
+        ui.onNodeWithTag("overlay_prompt_input").assertIsDisplayed()
+        screenshot("dark-toolkit")
+    }
+
     @Test fun markdownRendersHeadingsAndCodeAsReadableText() {
         ui.setContent { PeekTheme { Surface(Modifier.fillMaxSize()) { androidx.compose.foundation.layout.Box(Modifier.padding(20.dp)) {
             MarkdownText("# A clear answer\n\nThis is **important**.\n\n```python\nprint(42)\n```")

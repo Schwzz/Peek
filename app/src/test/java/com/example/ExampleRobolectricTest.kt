@@ -88,6 +88,19 @@ class ExampleRobolectricTest {
         assertTrue(prefs.all.isEmpty())
     }
 
+    @Test fun localProfilesWorkWithoutKeysAndKeepCloudCredentialsSeparate() {
+        val repo = ApiConfigRepository(context, cipher)
+        repo.saveConfig(ApiConfig(apiKey = "cloud-secret"))
+        val local = ApiConfig(VisionAiProvider.OLLAMA, baseUrl = "http://192.168.1.8:11434", modelName = "local-vision", supportsImages = true)
+        repo.saveConfig(local)
+        val reloaded = ApiConfigRepository(context, cipher)
+        assertTrue(reloaded.isConfigured())
+        assertEquals("", reloaded.getEffectiveApiKey())
+        assertEquals(true, reloaded.getConfig().supportsImages)
+        assertEquals("cloud-secret", reloaded.getConfig(VisionAiProvider.GEMINI).apiKey)
+        assertEquals("", reloaded.getConfig(VisionAiProvider.LM_STUDIO).apiKey)
+    }
+
     @Test fun cropClampsOutOfBoundsAndEmptySelections() {
         val bitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
         assertEquals(50, BitmapUtils.crop(bitmap, Rect(10, 20, 60, 70)).width)

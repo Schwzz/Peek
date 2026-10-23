@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit
 
 class GeminiVisionService(
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .followRedirects(false).followSslRedirects(false)
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
@@ -36,7 +37,7 @@ class GeminiVisionService(
             }
 
             val model = config.modelName.ifBlank { VisionAiProvider.GEMINI.defaultModel }
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+            val url = ProviderEndpoints.url(config, "models/").newBuilder().addPathSegment("$model:generateContent").build()
 
             val contentsArray = JSONArray()
 
@@ -117,6 +118,7 @@ class GeminiVisionService(
             if (parts != null) {
                 for (i in 0 until parts.length()) {
                     val part = parts.getJSONObject(i)
+                    if (part.optBoolean("thought")) continue
                     val text = part.optString("text", "")
                     if (text.isNotEmpty()) {
                         stringBuilder.append(text)

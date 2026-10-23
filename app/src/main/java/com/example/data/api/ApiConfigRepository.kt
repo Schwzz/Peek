@@ -8,7 +8,6 @@ import com.example.util.KeyCipher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 class ApiConfigRepository(context: Context, private val cipher: KeyCipher = KeystoreCrypto) {
     private val prefs: SharedPreferences =
@@ -33,17 +32,15 @@ class ApiConfigRepository(context: Context, private val cipher: KeyCipher = Keys
     }
 
     fun isConfigured(config: ApiConfig = getConfig()): Boolean {
-        return getEffectiveApiKey(config).isNotBlank()
+        return config.modelName.isNotBlank() && (!config.provider.requiresApiKey || getEffectiveApiKey(config).isNotBlank()) &&
+            runCatching { ProviderEndpoints.base(config) }.isSuccess
     }
 
     fun getConfig(provider: VisionAiProvider): ApiConfig = loadProviderConfig(provider)
 
     fun saveConfig(newConfig: ApiConfig) {
         require(newConfig.modelName.isNotBlank() && newConfig.modelName != "custom") { "Enter a model name." }
-        if (newConfig.provider.supportsCustomUrl) {
-            val url = newConfig.baseUrl.trim().toHttpUrlOrNull()
-            require(url != null && url.isHttps) { "Enter a valid HTTPS API endpoint." }
-        }
+        ProviderEndpoints.base(newConfig)
         val encryptedKey = cipher.encrypt(newConfig.apiKey.trim())
         val prefix = newConfig.provider.name.lowercase()
         val legacyProvider = runCatching {
@@ -63,6 +60,7 @@ class ApiConfigRepository(context: Context, private val cipher: KeyCipher = Keys
             putString("${prefix}_api_key", encryptedKey)
             putString("${prefix}_base_url", newConfig.baseUrl.trim())
             putString("${prefix}_model_name", newConfig.modelName.trim())
+            putString("${prefix}_model_vision", newConfig.supportsImages?.toString())
             remove("api_key")
             remove("base_url")
             remove("model_name")
@@ -93,8 +91,9 @@ class ApiConfigRepository(context: Context, private val cipher: KeyCipher = Keys
         return ApiConfig(
             provider = provider,
             apiKey = decryptedApiKey,
-            baseUrl = baseUrl,
-            modelName = modelName
+            baseUrl = if (provider.supportsCustomUrl) baseUrl else provider.defaultBaseUrl,
+            modelName = modelName,
+            supportsImages = prefs.getString("${prefix}_model_vision", null)?.toBooleanStrictOrNull()
         )
     }
 
