@@ -41,7 +41,8 @@ class UiReworkTest {
         val file = File("build/reports/ui/$name.png").apply { parentFile.mkdirs() }
         // Draw on the UI thread: Robolectric has no live compositor for PixelCopy.
         ui.runOnIdle {
-            val view = ui.activity.window.decorView
+            val view = android.view.inspector.WindowInspector.getGlobalWindowViews().lastOrNull { it.isShown && it.width > 0 }
+                ?: ui.activity.window.decorView
             val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
             view.draw(Canvas(bitmap))
             file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }

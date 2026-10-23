@@ -70,7 +70,8 @@ class ProviderSupportTest {
                 val request = server.takeRequest(5, TimeUnit.SECONDS)!!
                 assertEquals(ProviderEndpoints.url(config, "chat/completions").encodedPath, request.path)
                 assertEquals("Bearer key-for-${provider.name}", request.getHeader("Authorization"))
-                assertTrue(request.body.readUtf8().contains("data:image/jpeg;base64,jpeg"))
+                val content = JSONObject(request.body.readUtf8()).getJSONArray("messages").getJSONObject(0).getJSONArray("content")
+                assertEquals("data:image/jpeg;base64,jpeg", content.getJSONObject(1).getJSONObject("image_url").getString("url"))
             }
         }
     }

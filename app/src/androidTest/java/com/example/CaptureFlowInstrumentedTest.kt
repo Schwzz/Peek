@@ -81,6 +81,10 @@ class CaptureFlowInstrumentedTest {
                 instrumentation.uiAutomation.grantRuntimePermission(context.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
             }
             scenario = ActivityScenario.launch(MainActivity::class.java)
+            click(By.desc("Settings"))
+            checkNotNull(device.wait(Until.findObject(By.text("Models & appearance")), 10000))
+            evidence("model-settings")
+            click(By.desc("Close settings"))
             click(By.text("Start Peek"))
             val approve = device.wait(Until.findObject(By.res("android:id/button1")), 10000)
                 ?: device.wait(Until.findObject(By.textContains("Start now")), 3000)
