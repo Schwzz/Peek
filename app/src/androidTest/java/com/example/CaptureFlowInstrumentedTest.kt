@@ -70,7 +70,7 @@ class CaptureFlowInstrumentedTest {
     }
 
     @Test fun switchingAppsAndRepeatedRegionCapturesKeepTheSameSessionAlive() {
-        instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
+        instrumentation.uiAutomation.serviceInfo = checkNotNull(instrumentation.uiAutomation.serviceInfo).apply {
             flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
         device.executeShellCommand("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
