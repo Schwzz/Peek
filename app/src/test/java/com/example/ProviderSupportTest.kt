@@ -84,6 +84,7 @@ class ProviderSupportTest {
             val request = server.takeRequest(5, TimeUnit.SECONDS)!!
             assertEquals("/v1/chat/completions", request.path)
             assertNull(request.getHeader("Authorization"))
+            assertEquals("hello", JSONObject(request.body.readUtf8()).getJSONArray("messages").getJSONObject(0).getString("content"))
         }
     }
 

@@ -178,8 +178,6 @@ fun SettingsDialog(onDismiss: () -> Unit) {
                         OutlinedButton(onClick = { test(false) }, enabled = !busy && draft.modelName.isNotBlank(), modifier = Modifier.weight(1f).testTag("test_connection_button"), shape = RoundedCornerShape(8.dp)) { Text("Test text") }
                         OutlinedButton(onClick = { test(true) }, enabled = !busy && draft.modelName.isNotBlank(), modifier = Modifier.weight(1f).testTag("test_vision_button"), shape = RoundedCornerShape(8.dp)) { Text("Test image") }
                     }
-                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    status?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("connection_status")) }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Text("Appearance", style = MaterialTheme.typography.titleSmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -190,7 +188,10 @@ fun SettingsDialog(onDismiss: () -> Unit) {
                     Text("Keys are stored encrypted on this device. Each provider keeps its own saved settings.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Button(enabled = !busy, onClick = {
+                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                status?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp).testTag("connection_status")) }
+                Button(enabled = !busy && draft.modelName.isNotBlank(), onClick = {
                     runCatching { repo.saveConfig(draft) }.onSuccess { onDismiss() }.onFailure { failed = true; status = it.localizedMessage }
                 }, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp).testTag("save_settings_button"), shape = RoundedCornerShape(8.dp)) { Text("Use this model") }
             }

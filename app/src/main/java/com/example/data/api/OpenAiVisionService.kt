@@ -77,7 +77,9 @@ class OpenAiVisionService(
                     })
                 })
             }
-            currentMsg.put("content", contentArray)
+            // Plain text stays a string for servers that only accept image-block
+            // arrays on their multimodal models (including local compatible APIs).
+            currentMsg.put("content", if (imageBase64 == null) textPrompt else contentArray)
             messagesArray.put(currentMsg)
 
             val rootJson = JSONObject().apply {
