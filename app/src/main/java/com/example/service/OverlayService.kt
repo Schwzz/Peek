@@ -207,7 +207,7 @@ class OverlayService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = preferredPanel!!.x
             y = preferredPanel!!.y
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
 
         panelView = ComposeView(this).apply {

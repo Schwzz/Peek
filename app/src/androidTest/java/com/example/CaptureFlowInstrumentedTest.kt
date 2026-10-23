@@ -120,6 +120,14 @@ class CaptureFlowInstrumentedTest {
                     server.enqueue(MockResponse().setBody("""{"message":{"content":"Local image response received"}}"""))
                     click(By.clazz("android.widget.EditText"))
                     device.waitForIdle()
+                    val keyboard = checkNotNull(instrumentation.uiAutomation.windows.firstOrNull {
+                        it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+                    }) { "The keyboard did not appear" }
+                    val keyboardBounds = android.graphics.Rect().also { keyboard.getBoundsInScreen(it) }
+                    val inputBounds = checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)).visibleBounds
+                    val sendBounds = checkNotNull(device.wait(Until.findObject(By.desc("Send question")), 5000)).visibleBounds
+                    assertTrue("Keyboard covered the composer: $inputBounds vs $keyboardBounds", inputBounds.bottom <= keyboardBounds.top)
+                    assertTrue("Keyboard covered Send: $sendBounds vs $keyboardBounds", sendBounds.bottom <= keyboardBounds.top)
                     checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)).text = "Describe this selection"
                     click(By.desc("Send question"))
                     awaitState("The local model answer never reached chat") {
