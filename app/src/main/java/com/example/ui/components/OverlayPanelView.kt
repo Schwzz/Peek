@@ -163,7 +163,7 @@ fun OverlayPanelView(
                             }
                         }
                     }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(value = prompt, onValueChange = OverlayStateManager::setDraftPrompt,
                             placeholder = { Text(if (currentImage == null) "Ask a question" else "Ask about this selection", style = MaterialTheme.typography.bodyMedium) },
                             modifier = Modifier.weight(1f).heightIn(max = 100.dp).testTag("overlay_prompt_input"), maxLines = 3,

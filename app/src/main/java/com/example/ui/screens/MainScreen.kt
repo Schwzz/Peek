@@ -125,7 +125,7 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
                         Icon(if (running) Icons.Default.Stop else Icons.Default.PlayArrow, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp)); Text(if (running) "Stop overlay" else "Start Peek")
                     }
-                    Text("Tap the bubble to select. Hold it for chat.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Tap the floating button to choose a tool.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Column {
                     Text("TOOLS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))

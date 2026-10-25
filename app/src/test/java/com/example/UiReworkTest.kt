@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -34,6 +35,8 @@ class UiReworkTest {
         OverlayStateManager.clearChat()
         OverlayStateManager.clearImage()
         OverlayStateManager.setServiceRunning(false)
+        OverlayStateManager.finishCapture(showPanel = false)
+        OverlayStateManager.setToolboxExpanded(false)
     }
 
     private fun screenshot(name: String) {
@@ -89,6 +92,53 @@ class UiReworkTest {
         ui.onNodeWithTag("overlay_model_picker").assertIsDisplayed()
         ui.onNodeWithTag("overlay_prompt_input").assertIsDisplayed()
         screenshot("dark-toolkit")
+    }
+
+    @Test fun toolboxActionsStayAlignedAndOnlyRunWhenChosen() {
+        var selected = 0; var images = 0; var chats = 0
+        ui.setContent { PeekTheme { androidx.compose.foundation.layout.Box(Modifier.width(232.dp)) {
+            com.example.ui.components.OverlayToolboxView({ selected++ }, { images++ }, { chats++ }, {}, {})
+        } } }
+        val select = ui.onNodeWithTag("toolbox_select").fetchSemanticsNode().boundsInRoot
+        val image = ui.onNodeWithTag("toolbox_image").fetchSemanticsNode().boundsInRoot
+        val chat = ui.onNodeWithTag("toolbox_chat").fetchSemanticsNode().boundsInRoot
+        Assert.assertEquals(select.top, image.top, 0.1f)
+        Assert.assertEquals(select.height, chat.height, 0.1f)
+        Assert.assertEquals(select.width, image.width, 1f)
+        Assert.assertEquals(0, selected)
+        ui.onNodeWithTag("toolbox_chat").performClick()
+        ui.runOnIdle { Assert.assertEquals(1, chats); Assert.assertEquals(0, selected); Assert.assertEquals(0, images) }
+        ui.onNodeWithTag("toolbox_image").performClick()
+        ui.onNodeWithTag("toolbox_select").performClick()
+        ui.runOnIdle { Assert.assertEquals(1, images); Assert.assertEquals(1, selected) }
+        screenshot("toolbox")
+    }
+
+    @Test fun sendButtonStaysCenteredWithSingleAndMultilineInput() {
+        ui.setContent { PeekTheme { androidx.compose.foundation.layout.Box(Modifier.width(320.dp).height(440.dp)) {
+            OverlayPanelView(modifier = Modifier.fillMaxSize(), onCaptureScreenRequested = {}, onPickImageRequested = {},
+                onMinimizeRequested = {}, onCloseRequested = {}, onOpenSettingsRequested = {})
+        } } }
+        fun assertCenters() {
+            val input = ui.onNodeWithTag("overlay_prompt_input").fetchSemanticsNode().boundsInRoot
+            val send = ui.onNodeWithTag("overlay_send_button").fetchSemanticsNode().boundsInRoot
+            Assert.assertEquals(input.center.y, send.center.y, 1f)
+        }
+        assertCenters()
+        ui.onNodeWithTag("overlay_prompt_input").performTextInput("First line\nSecond line")
+        assertCenters()
+        screenshot("aligned-composer")
+    }
+
+    @Test fun opacitySliderAppliesImmediately() {
+        val preferences = com.example.service.OverlayPreferences.getInstance(ui.activity)
+        preferences.setButtonOpacity(1f)
+        ui.setContent { PeekTheme { com.example.ui.screens.SettingsDialog(onDismiss = {}) } }
+        ui.onNodeWithTag("button_opacity_slider").performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(0.4f) }
+        ui.onNodeWithTag("button_opacity_value").assertTextEquals("40%")
+        ui.runOnIdle { Assert.assertEquals(0.4f, preferences.buttonOpacity.value, 0.001f) }
+        screenshot("button-opacity-settings")
+        preferences.setButtonOpacity(1f)
     }
 
     @Test fun markdownRendersHeadingsAndCodeAsReadableText() {

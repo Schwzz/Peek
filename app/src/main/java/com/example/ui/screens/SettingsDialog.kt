@@ -14,6 +14,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import com.example.R
+import com.example.service.OverlayPreferences
+import kotlin.math.roundToInt
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -47,6 +54,8 @@ fun SettingsDialog(onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     val appearance = remember { ThemePreference.get(context) }
     val theme by appearance.mode.collectAsState()
+    val overlayPreferences = remember { OverlayPreferences.getInstance(context) }
+    val buttonOpacity by overlayPreferences.buttonOpacity.collectAsState()
 
     fun change(next: ApiConfig) {
         job?.cancel(); busy = false; status = null
@@ -174,9 +183,9 @@ fun SettingsDialog(onDismiss: () -> Unit) {
                     }
                     Text(when (draft.supportsImages) { true -> "Images + text"; false -> "Text-only model. Use chat without an image."; null -> "Image support depends on the model. Test an image before using screen capture." },
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { test(false) }, enabled = !busy && draft.modelName.isNotBlank(), modifier = Modifier.weight(1f).testTag("test_connection_button"), shape = RoundedCornerShape(8.dp)) { Text("Test text") }
-                        OutlinedButton(onClick = { test(true) }, enabled = !busy && draft.modelName.isNotBlank(), modifier = Modifier.weight(1f).testTag("test_vision_button"), shape = RoundedCornerShape(8.dp)) { Text("Test image") }
+                    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(onClick = { test(false) }, enabled = !busy && draft.modelName.isNotBlank(), modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 48.dp).testTag("test_connection_button"), shape = RoundedCornerShape(8.dp)) { Text("Test text") }
+                        OutlinedButton(onClick = { test(true) }, enabled = !busy && draft.modelName.isNotBlank(), modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = 48.dp).testTag("test_vision_button"), shape = RoundedCornerShape(8.dp)) { Text("Test image") }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Text("Appearance", style = MaterialTheme.typography.titleSmall)
@@ -185,6 +194,19 @@ fun SettingsDialog(onDismiss: () -> Unit) {
                             FilterChip(selected = theme == mode, onClick = { appearance.select(mode) }, label = { Text(mode.name.lowercase().replaceFirstChar { it.uppercase() }) }, modifier = Modifier.testTag("theme_${mode.name.lowercase()}"))
                         }
                     }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(Modifier.size(40.dp).graphicsLayer { alpha = buttonOpacity }, shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                            Box(contentAlignment = Alignment.Center) { Icon(painterResource(R.drawable.ic_peek_mark), null, Modifier.size(24.dp)) }
+                        }
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text("Floating button", style = MaterialTheme.typography.titleSmall)
+                            Text("Opacity", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text("${(buttonOpacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge, modifier = Modifier.testTag("button_opacity_value"))
+                    }
+                    Slider(value = buttonOpacity, onValueChange = overlayPreferences::setButtonOpacity, valueRange = 0.2f..1f, steps = 15,
+                        modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Floating button opacity" }.testTag("button_opacity_slider"))
+                    Text("Lower opacity makes the floating button more transparent. Toolbox and chat remain fully visible.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Keys are stored encrypted on this device. Each provider keeps its own saved settings.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -193,7 +215,7 @@ fun SettingsDialog(onDismiss: () -> Unit) {
                     maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp).testTag("connection_status")) }
                 Button(enabled = !busy && draft.modelName.isNotBlank(), onClick = {
                     runCatching { repo.saveConfig(draft) }.onSuccess { onDismiss() }.onFailure { failed = true; status = it.localizedMessage }
-                }, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp).testTag("save_settings_button"), shape = RoundedCornerShape(8.dp)) { Text("Use this model") }
+                }, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp).heightIn(min = 48.dp).testTag("save_settings_button"), shape = RoundedCornerShape(8.dp)) { Text("Use this model") }
             }
         }
     }

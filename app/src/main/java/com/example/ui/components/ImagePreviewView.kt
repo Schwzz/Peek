@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,10 +37,10 @@ fun ImagePreviewView(bitmap: Bitmap, modifier: Modifier = Modifier, onBack: () -
         }, contentAlignment = Alignment.Center) {
             Image(bitmap.asImageBitmap(), "Attached image preview", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = zoom, scaleY = zoom, translationX = pan.x, translationY = pan.y))
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack, modifier = Modifier.testTag("image_preview_back")) { Text("Back") }
             TextButton(onClick = { zoom = 1f; pan = Offset.Zero }) { Text("Reset zoom") }
-            Button(onClick = onCrop, modifier = Modifier.testTag("crop_preview_button")) { Text("Crop") }
+            Button(onClick = onCrop, modifier = Modifier.testTag("crop_preview_button"), shape = RoundedCornerShape(8.dp)) { Text("Crop") }
         }
     }
 }

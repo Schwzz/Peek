@@ -20,6 +20,8 @@ class OverlayStateManagerTest {
         Dispatchers.setMain(dispatcher)
         OverlayStateManager.clearChat()
         OverlayStateManager.clearImage()
+        OverlayStateManager.finishCapture(showPanel = false)
+        OverlayStateManager.setToolboxExpanded(false)
     }
     @After fun cleanup() {
         OverlayStateManager.clearChat()
@@ -80,5 +82,26 @@ class OverlayStateManagerTest {
         assertFalse(OverlayStateManager.isCapturing.value)
         assertTrue(OverlayStateManager.isPanelExpanded.value)
         assertNull(OverlayStateManager.capturedScreenToCrop.value)
+    }
+
+    @Test fun toolboxAndChatAreExclusiveWithoutStartingCapture() {
+        val version = OverlayStateManager.captureVersion
+        OverlayStateManager.setPanelExpanded(true)
+        OverlayStateManager.setToolboxExpanded(true)
+        assertFalse(OverlayStateManager.isPanelExpanded.value)
+        assertTrue(OverlayStateManager.isToolboxExpanded.value)
+        assertFalse(OverlayStateManager.isCapturing.value)
+        assertEquals(version, OverlayStateManager.captureVersion)
+        OverlayStateManager.setPanelExpanded(true)
+        assertFalse(OverlayStateManager.isToolboxExpanded.value)
+    }
+
+    @Test fun captureClosesToolboxAndDoesNotAllowItToReopenDuringSelection() {
+        OverlayStateManager.setToolboxExpanded(true)
+        assertTrue(OverlayStateManager.beginCapture())
+        assertFalse(OverlayStateManager.isToolboxExpanded.value)
+        OverlayStateManager.setToolboxExpanded(true)
+        assertFalse(OverlayStateManager.isToolboxExpanded.value)
+        OverlayStateManager.finishCapture(showPanel = false)
     }
 }

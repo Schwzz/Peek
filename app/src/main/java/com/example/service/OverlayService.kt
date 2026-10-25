@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -42,6 +43,9 @@ import com.example.util.PanelBounds
 import com.example.MainActivity
 import com.example.ui.components.ScreenSelectorView
 import com.example.util.BitmapUtils
+import com.example.ui.components.OverlayToolboxView
+import com.example.ui.screens.ImagePickerActivity
+import com.example.R
 import com.example.ui.components.FloatingBubbleView
 import com.example.ui.components.OverlayPanelView
 import com.example.ui.screens.ScreenCaptureActivity
@@ -59,6 +63,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.onEach
 import kotlin.math.abs
 
+private data class OverlayWindowState(val expanded: Boolean, val toolbox: Boolean, val capturing: Boolean, val bitmap: Bitmap?)
+
 class OverlayService : Service() {
 
     private lateinit var windowManager: WindowManager
@@ -67,6 +73,10 @@ class OverlayService : Service() {
 
     private var bubbleView: ComposeView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
+
+    private var toolboxWindow: FrameLayout? = null
+    private var toolboxCompose: ComposeView? = null
+    private var toolboxParams: WindowManager.LayoutParams? = null
 
     private var panelView: ComposeView? = null
     private var panelParams: WindowManager.LayoutParams? = null
@@ -158,11 +168,13 @@ class OverlayService : Service() {
             setViewTreeViewModelStoreOwner(owner)
 
             setContent {
+                val opacity by OverlayPreferences.getInstance(this@OverlayService).buttonOpacity.collectAsState()
                 PeekTheme {
                     FloatingBubbleView(
-                        onClick = { requestScreenCapture() },
+                        opacity = opacity,
+                        onClick = { OverlayStateManager.toggleToolbox() },
                         onLongClick = { OverlayStateManager.setPanelExpanded(true) },
-                        onDrag = { dx, dy -> moveBubble(dx, dy) },
+                        onDrag = { dx, dy -> OverlayStateManager.setToolboxExpanded(false); moveBubble(dx, dy) },
                         onDragEnd = { snapBubble() }
                     )
                 }
@@ -235,29 +247,67 @@ class OverlayService : Service() {
                         onGeometryChanged = { savePanelBounds() },
                         onCropImageRequested = { cropImage() },
                         onCaptureScreenRequested = { requestScreenCapture() },
-                        onPickImageRequested = {
-                            OverlayStateManager.setPanelExpanded(false)
-                            val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
-                                action = MainActivity.ACTION_PICK_IMAGE
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                            }
-                            startActivity(intent)
-                        },
+                        onPickImageRequested = { openImagePicker() },
                         onMinimizeRequested = {
                             OverlayStateManager.setPanelExpanded(false)
                         },
                         onCloseRequested = { stopSelf() },
-                        onOpenSettingsRequested = {
-                            OverlayStateManager.setPanelExpanded(false)
-                            val intent = Intent(this@OverlayService, MainActivity::class.java).apply {
-                                action = MainActivity.ACTION_OPEN_SETTINGS
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                            }
-                            startActivity(intent)
-                        }
+                        onOpenSettingsRequested = { openSettings() }
                     )
                 }
             }
+        }
+        toolboxCompose = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+            setViewTreeViewModelStoreOwner(owner)
+            setContent {
+                PeekTheme {
+                    OverlayToolboxView(
+                        onSelect = { requestScreenCapture() },
+                        onAddImage = { openImagePicker() },
+                        onChat = { OverlayStateManager.setPanelExpanded(true) },
+                        onSettings = { openSettings() },
+                        onDismiss = { OverlayStateManager.setToolboxExpanded(false) }
+                    )
+                }
+            }
+        }
+        toolboxWindow = object : FrameLayout(this) {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                    if (event.action == KeyEvent.ACTION_UP) OverlayStateManager.setToolboxExpanded(false)
+                    return true
+                }
+                return super.dispatchKeyEvent(event)
+            }
+        }.apply {
+            setViewTreeLifecycleOwner(owner)
+            setViewTreeSavedStateRegistryOwner(owner)
+            setViewTreeViewModelStoreOwner(owner)
+            isFocusableInTouchMode = true
+            addView(toolboxCompose, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+            setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                    // Leave button taps to its toggle handler, rather than dismissing
+                    // just before that handler runs and accidentally reopening the menu.
+                    val location = IntArray(2)
+                    bubbleView?.getLocationOnScreen(location)
+                    val overButton = event.rawX >= location[0] && event.rawX < location[0] + (bubbleView?.width ?: 0) &&
+                        event.rawY >= location[1] && event.rawY < location[1] + (bubbleView?.height ?: 0)
+                    if (!overButton) OverlayStateManager.setToolboxExpanded(false)
+                    true
+                } else false
+            }
+        }
+        toolboxParams = WindowManager.LayoutParams(
+            (232 * displayMetrics.density).toInt(), (120 * displayMetrics.density).toInt(), layoutFlag,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
         }
         selectorCompose = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -338,6 +388,7 @@ class OverlayService : Service() {
         val (x, y) = OverlayGeometry.clampBubble(params.x + dx.toInt(), params.y + dy.toInt(), size, metrics.widthPixels, metrics.heightPixels)
         params.x = x; params.y = y
         bubbleView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.updateViewLayout(it, params) } }
+        if (OverlayStateManager.isToolboxExpanded.value) positionToolbox()
     }
 
     private fun snapBubble() {
@@ -387,6 +438,7 @@ class OverlayService : Service() {
             y = (layoutPrefs.getFloat("panel_y", 0.10f) * metrics.heightPixels).toInt()
         )
         updatePanelBounds()
+        if (OverlayStateManager.isToolboxExpanded.value) positionToolbox()
         bubbleParams?.let {
             it.x = (layoutPrefs.getFloat("bubble_x", 0.05f) * metrics.widthPixels).toInt()
             it.y = (layoutPrefs.getFloat("bubble_y", 0.35f) * metrics.heightPixels).toInt()
@@ -394,7 +446,35 @@ class OverlayService : Service() {
         moveBubble(0f, 0f)
     }
 
+    private fun openImagePicker() {
+        OverlayStateManager.setToolboxExpanded(false)
+        OverlayStateManager.setPanelExpanded(false)
+        runCatching { ImagePickerActivity.launch(this) }.onFailure {
+            OverlayStateManager.setErrorMessage("Could not open images: ${it.localizedMessage}")
+            OverlayStateManager.setPanelExpanded(true)
+        }
+    }
+
+    private fun openSettings() {
+        OverlayStateManager.setToolboxExpanded(false)
+        OverlayStateManager.setPanelExpanded(false)
+        startActivity(Intent(this, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_OPEN_SETTINGS
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        })
+    }
+
+    private fun positionToolbox() {
+        val button = bubbleParams ?: return
+        val params = toolboxParams ?: return
+        val metrics = resources.displayMetrics
+        val fit = OverlayGeometry.toolboxBounds(button.x, button.y, metrics.widthPixels, metrics.heightPixels, metrics.density)
+        params.x = fit.x; params.y = fit.y; params.width = fit.width; params.height = fit.height
+        toolboxWindow?.takeIf { it.isAttachedToWindow }?.let { windowManager.updateViewLayout(it, params) }
+    }
+
     private fun requestScreenCapture() {
+        OverlayStateManager.setToolboxExpanded(false)
         if (OverlayStateManager.isCapturing.value) return
         if (!OverlayStateManager.isScreenSharing.value) {
             ScreenCaptureActivity.launch(this)
@@ -413,14 +493,14 @@ class OverlayService : Service() {
     }
 
     private fun observeState() {
-        combine(OverlayStateManager.isPanelExpanded, OverlayStateManager.isCapturing, OverlayStateManager.capturedScreenToCrop) { expanded, capturing, bitmap ->
-            Triple(expanded, capturing, bitmap)
-        }.onEach { (expanded, capturing, bitmap) ->
+        combine(OverlayStateManager.isPanelExpanded, OverlayStateManager.isToolboxExpanded, OverlayStateManager.isCapturing, OverlayStateManager.capturedScreenToCrop) { expanded, toolbox, capturing, bitmap ->
+            OverlayWindowState(expanded, toolbox, capturing, bitmap)
+        }.onEach { (expanded, toolbox, capturing, bitmap) ->
             // Keep the window's Compose recomposer attached across captures. Detaching a
             // retained composition cancels its window recomposer and can leave stale UI.
             fun hide(view: View?) { view?.visibility = View.GONE }
             if (capturing) {
-                hide(bubbleView); hide(panelView)
+                hide(bubbleView); hide(panelView); hide(toolboxWindow)
                 if (bitmap != null) {
                     selectorWindow?.visibility = View.VISIBLE
                     if (selectorWindow?.isAttachedToWindow == false) runCatching { windowManager.addView(selectorWindow, selectorParams) }.onFailure {
@@ -431,6 +511,17 @@ class OverlayService : Service() {
                 return@onEach
             }
             hide(selectorWindow)
+            if (toolbox) {
+                positionToolbox()
+                toolboxWindow?.visibility = View.VISIBLE
+                if (toolboxWindow?.isAttachedToWindow == false) {
+                    runCatching { windowManager.addView(toolboxWindow, toolboxParams); toolboxWindow?.requestFocus() }.onFailure {
+                        OverlayStateManager.setToolboxExpanded(false)
+                        OverlayStateManager.setErrorMessage("Could not show toolbox: ${it.localizedMessage}")
+                        OverlayStateManager.setPanelExpanded(true)
+                    }
+                }
+            } else hide(toolboxWindow)
             val view = if (expanded) panelView else bubbleView
             hide(if (expanded) bubbleView else panelView)
             if (expanded) updatePanelBounds()
@@ -482,8 +573,8 @@ class OverlayService : Service() {
 
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("Peek AI Overlay Active")
-            .setContentText("Tap the bubble to select a region. Hold it to open chat.")
-            .setSmallIcon(android.R.drawable.ic_menu_view)
+            .setContentText("Tap the floating button to open the toolbox.")
+            .setSmallIcon(R.drawable.ic_peek_mark)
             .setContentIntent(pendingOpen)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Overlay", pendingStop)
             .setOngoing(true)
@@ -496,6 +587,7 @@ class OverlayService : Service() {
         if (active === this) active = null
         stopService(Intent(this, MediaProjectionService::class.java))
         OverlayStateManager.setServiceRunning(false)
+        OverlayStateManager.setToolboxExpanded(false)
         OverlayStateManager.setPanelExpanded(false)
         OverlayStateManager.cancelRequest()
         if (OverlayStateManager.isCapturing.value) {
@@ -504,6 +596,8 @@ class OverlayService : Service() {
 
         scope.cancel()
         if (selectorWindow?.isAttachedToWindow == true) runCatching { windowManager.removeView(selectorWindow) }
+        if (toolboxWindow?.isAttachedToWindow == true) runCatching { windowManager.removeView(toolboxWindow) }
+        toolboxCompose?.disposeComposition()
         selectorCompose?.disposeComposition()
         panelView?.disposeComposition()
         bubbleView?.disposeComposition()

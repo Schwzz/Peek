@@ -42,6 +42,13 @@
             android:theme="@style/Theme.Transparent" />
 
         <activity
+            android:name=".ui.screens.ImagePickerActivity"
+            android:exported="false"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Transparent" />
+
+        <activity
             android:name=".ui.screens.ScreenSelectorActivity"
             android:exported="false"
             android:theme="@style/Theme.Transparent" />

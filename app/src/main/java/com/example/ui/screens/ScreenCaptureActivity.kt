@@ -25,7 +25,7 @@ class ScreenCaptureActivity : ComponentActivity() {
             }
         } else {
             OverlayStateManager.setStartingScreenSharing(false)
-            OverlayStateManager.setStatusMessage("Screen access was cancelled. Tap the bubble to try again.")
+            OverlayStateManager.setStatusMessage("Screen access was cancelled. Choose Select in the toolbox to try again.")
         }
         finish()
     }

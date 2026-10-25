@@ -93,11 +93,11 @@ class ScreenCaptureHelper(
     }
 
     suspend fun capture(notBefore: Long): Bitmap {
-        check(!closed) { "Screen sharing has ended. Tap the bubble to reconnect." }
+        check(!closed) { "Screen sharing has ended. Choose Select in the toolbox to reconnect." }
         // Window removal must reach the compositor before selecting its newest frame.
         delay(200)
         withTimeout(5000) { frames.first { closed || (latestImage != null && latestFrameAt >= notBefore) } }
-        check(!closed) { "Screen sharing has ended. Tap the bubble to reconnect." }
+        check(!closed) { "Screen sharing has ended. Choose Select in the toolbox to reconnect." }
         val image = checkNotNull(latestImage) { "No screen frame is available. Please try again." }
         latestImage = null
         // All image ownership and teardown run on Main to avoid closing a buffer during a copy.

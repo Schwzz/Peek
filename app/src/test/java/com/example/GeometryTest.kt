@@ -5,6 +5,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GeometryTest {
+    @Test fun toolboxFitsAtEveryScreenEdgeAndAvoidsTheButtonWhenSpaceAllows() {
+        for ((width, height) in listOf(400 to 800, 800 to 400)) {
+            for ((x, y) in listOf(0 to 0, width - 60 to 0, 0 to height - 60, width - 60 to height - 60)) {
+                val menu = OverlayGeometry.toolboxBounds(x, y, width, height, 1f)
+                assertTrue(menu.x >= 0 && menu.x + menu.width <= width)
+                assertTrue(menu.y >= 0 && menu.y + menu.height <= height)
+                assertTrue(menu.y >= y + 60 || menu.y + menu.height <= y)
+            }
+        }
+    }
+
     @Test fun panelsAndBubblesStayOnScreenEvenWhenKeyboardLeavesLittleSpace() {
         val bounds = OverlayGeometry.clampPanel(PanelBounds(-500, 900, 1200, 1600), 800, 250, 2f)
         assertEquals(0, bounds.x)

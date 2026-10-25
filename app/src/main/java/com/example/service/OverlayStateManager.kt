@@ -29,6 +29,17 @@ object OverlayStateManager {
     private val _isPanelExpanded = MutableStateFlow(false)
     val isPanelExpanded: StateFlow<Boolean> = _isPanelExpanded.asStateFlow()
 
+    private val _isToolboxExpanded = MutableStateFlow(false)
+    val isToolboxExpanded: StateFlow<Boolean> = _isToolboxExpanded.asStateFlow()
+
+    fun setToolboxExpanded(expanded: Boolean) {
+        if (expanded && _isCapturing.value) return
+        _isToolboxExpanded.value = expanded
+        if (expanded) _isPanelExpanded.value = false
+    }
+
+    fun toggleToolbox() = setToolboxExpanded(!_isToolboxExpanded.value)
+
     private val _isCapturing = MutableStateFlow(false)
     val isCapturing: StateFlow<Boolean> = _isCapturing.asStateFlow()
 
@@ -45,6 +56,7 @@ object OverlayStateManager {
 
     fun beginCapture(): Boolean {
         if (_isCapturing.value) return false
+        _isToolboxExpanded.value = false
         captureVersion++
         captureRequestedAt = System.nanoTime() / 1_000_000
         _isCapturing.value = true
@@ -54,7 +66,7 @@ object OverlayStateManager {
     fun finishCapture(showPanel: Boolean = true) {
         captureVersion++
         _capturedScreenToCrop.value = null
-        _isPanelExpanded.value = showPanel
+        setPanelExpanded(showPanel)
         _isCapturing.value = false
     }
 
@@ -86,10 +98,11 @@ object OverlayStateManager {
 
     fun setPanelExpanded(expanded: Boolean) {
         _isPanelExpanded.value = expanded
+        if (expanded) _isToolboxExpanded.value = false
     }
 
     fun togglePanel() {
-        _isPanelExpanded.value = !_isPanelExpanded.value
+        setPanelExpanded(!_isPanelExpanded.value)
     }
 
     fun setCurrentImage(bitmap: Bitmap?) {
@@ -132,7 +145,7 @@ object OverlayStateManager {
     private var requestVersion = 0L
     private var imageLoad: Job? = null
 
-    fun loadImage(context: Context, uri: Uri) {
+    fun loadImage(context: Context, uri: Uri, onFinished: () -> Unit = {}) {
         imageLoad?.cancel()
         val appContext = context.applicationContext
         _statusMessage.value = "Loading image..."
@@ -144,6 +157,9 @@ object OverlayStateManager {
                 throw e
             } catch (e: Exception) {
                 setErrorMessage("Failed to load image: ${e.localizedMessage}")
+                if (_isServiceRunning.value) setPanelExpanded(true)
+            } finally {
+                onFinished()
             }
         }
     }

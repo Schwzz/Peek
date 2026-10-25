@@ -49,7 +49,7 @@ class MediaProjectionService : Service() {
             val notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentTitle("Peek screen access is active")
-                .setContentText("Tap the bubble to select a region. Hold it to open chat.")
+                .setContentText("Tap the floating button to open the toolbox.")
                 .setOngoing(true).addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop screen access", stop).build()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             else startForeground(NOTIFICATION_ID, notification)
@@ -59,7 +59,7 @@ class MediaProjectionService : Service() {
             active = this
             OverlayStateManager.setScreenSharing(true)
             OverlayStateManager.setStartingScreenSharing(false)
-            OverlayStateManager.setStatusMessage("Ready over other apps. Tap the bubble to select; hold it for chat.")
+            OverlayStateManager.setStatusMessage("Ready over other apps. Open the toolbox to select, add an image, or chat.")
             if (intent.getBooleanExtra(EXTRA_CAPTURE_WHEN_READY, false)) {
                 scope.launch { delay(400); OverlayService.captureScreen(this@MediaProjectionService) }
             }
@@ -100,7 +100,7 @@ class MediaProjectionService : Service() {
         OverlayStateManager.setScreenSharing(false)
         OverlayStateManager.setStartingScreenSharing(false)
         if (OverlayStateManager.isCapturing.value) OverlayStateManager.finishCapture(showPanel = false)
-        OverlayStateManager.setStatusMessage("Screen access stopped. Tap the bubble to reconnect.")
+        OverlayStateManager.setStatusMessage("Screen access stopped. Choose Select in the toolbox to reconnect.")
         scope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()

@@ -13,6 +13,7 @@ import androidx.test.uiautomator.Until
 import com.example.service.MediaProjectionService
 import com.example.service.OverlayService
 import com.example.service.OverlayStateManager
+import com.example.service.OverlayPreferences
 import com.example.data.api.ApiConfig
 import com.example.data.api.ApiConfigRepository
 import com.example.data.api.VisionAiProvider
@@ -69,6 +70,17 @@ class CaptureFlowInstrumentedTest {
         })
     }
 
+    private fun openToolbox() {
+        val version = OverlayStateManager.captureVersion
+        click(By.desc("Open Peek toolbox"))
+        awaitState("Toolbox did not open") { OverlayStateManager.isToolboxExpanded.value }
+        checkNotNull(device.wait(Until.findObject(By.desc("Select screen")), 5000))
+        assertFalse("Opening the toolbox started selection", OverlayStateManager.isCapturing.value)
+        assertNull(OverlayStateManager.capturedScreenToCrop.value)
+        assertEquals("Opening the toolbox requested a screenshot", version, OverlayStateManager.captureVersion)
+        assertOtherAppRemainsResumed()
+    }
+
     @Test fun switchingAppsAndRepeatedRegionCapturesKeepTheSameSessionAlive() {
         instrumentation.uiAutomation.serviceInfo = checkNotNull(instrumentation.uiAutomation.serviceInfo).apply {
             flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
@@ -77,8 +89,16 @@ class CaptureFlowInstrumentedTest {
         var scenario: ActivityScenario<MainActivity>? = null
         val configRepo = ApiConfigRepository.getInstance(context)
         val originalConfig = configRepo.getConfig()
+        val preferences = OverlayPreferences.getInstance(context)
+        val originalOpacity = preferences.buttonOpacity.value
         val server = MockWebServer().apply { start() }
         try {
+            val icon = context.packageManager.getApplicationIcon(context.packageName)
+            val iconBitmap = Bitmap.createBitmap(192, 192, Bitmap.Config.ARGB_8888)
+            icon.setBounds(0, 0, 192, 192); icon.draw(android.graphics.Canvas(iconBitmap))
+            val folder = File(context.filesDir, "capture-evidence").apply { mkdirs() }
+            File(folder, "app-icon.png").outputStream().use { iconBitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            iconBitmap.recycle()
             configRepo.saveConfig(ApiConfig(VisionAiProvider.OLLAMA, baseUrl = server.url("/").toString(), modelName = "test-vision", supportsImages = true))
             if (android.os.Build.VERSION.SDK_INT >= 33) {
                 instrumentation.uiAutomation.grantRuntimePermission(context.packageName, android.Manifest.permission.POST_NOTIFICATIONS)
@@ -100,9 +120,25 @@ class CaptureFlowInstrumentedTest {
             assertOtherAppRemainsResumed()
             assertTrue(OverlayStateManager.isScreenSharing.value)
 
+            openToolbox()
+            evidence("toolbox")
+            click(By.desc("Open Peek toolbox"))
+            awaitState("Tapping the button again did not close the toolbox") { !OverlayStateManager.isToolboxExpanded.value }
+            openToolbox()
+            device.pressBack()
+            awaitState("Back did not dismiss the toolbox") { !OverlayStateManager.isToolboxExpanded.value }
+            assertOtherAppRemainsResumed()
+            openToolbox()
+            click(By.desc("Open chat"))
+            awaitState("Chat action did not open chat") { OverlayStateManager.isPanelExpanded.value }
+            assertFalse(OverlayStateManager.isToolboxExpanded.value)
+            assertFalse(OverlayStateManager.isCapturing.value)
+            click(By.desc("Minimize to bubble"))
+
             repeat(2) {
                 evidence("before-capture-$it")
-                click(By.descContains("Peek: tap to select screen"))
+                openToolbox()
+                click(By.desc("Select screen"))
                 awaitState("No captured screen reached the selector") { OverlayStateManager.capturedScreenToCrop.value != null }
                 assertOtherAppRemainsResumed()
                 checkNotNull(device.wait(Until.findObject(By.text("Use selection")), 15000)) { "Region selector controls were not visible" }
@@ -166,12 +202,32 @@ class CaptureFlowInstrumentedTest {
             evidence("capture-over-other-app")
             context.stopService(Intent(context, MediaProjectionService::class.java))
             awaitState("Explicit stop did not release projection") { !OverlayStateManager.isScreenSharing.value }
+            openToolbox()
+            assertFalse("Opening tools requested screen permission", OverlayStateManager.isStartingScreenSharing.value)
+            click(By.desc("Add image"))
+            awaitState("System image picker did not open") {
+                device.executeShellCommand("dumpsys activity activities").lineSequence().any {
+                    (it.contains("mResumedActivity") || it.contains("topResumedActivity")) &&
+                        (it.contains("photopicker", ignoreCase = true) || it.contains("documentsui", ignoreCase = true))
+                }
+            }
+            evidence("image-picker")
+            device.pressBack()
+            awaitState("Image picker did not return to the toolbox") {
+                OverlayStateManager.isToolboxExpanded.value && device.hasObject(By.desc("Close toolbox"))
+            }
+            assertOtherAppRemainsResumed()
+            click(By.desc("Close toolbox"))
+            preferences.setButtonOpacity(0.4f)
+            device.waitForIdle()
+            evidence("faded-floating-button")
         } finally {
             evidence("capture-final")
             scenario?.close()
             context.stopService(Intent(context, MediaProjectionService::class.java))
             context.stopService(Intent(context, OverlayService::class.java))
             configRepo.saveConfig(originalConfig)
+            preferences.setButtonOpacity(originalOpacity)
             server.shutdown()
         }
     }
