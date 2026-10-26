@@ -589,6 +589,7 @@ class OverlayService : Service() {
         OverlayStateManager.setToolboxExpanded(false)
         OverlayStateManager.setPanelExpanded(false)
         OverlayStateManager.cancelRequest()
+        OverlayStateManager.cancelImageLoading()
         if (OverlayStateManager.isCapturing.value) {
             OverlayStateManager.finishCapture(showPanel = false)
         }

@@ -157,10 +157,14 @@ object OverlayStateManager {
         _capturedScreenToCrop.value = bitmap
     }
 
-    fun clearImage() {
+    fun cancelImageLoading() {
         imageLoadVersion++
         imageLoad?.cancel()
         _isLoadingImages.value = false
+    }
+
+    fun clearImage() {
+        cancelImageLoading()
         _images.value = emptyList()
         _currentImage.value = null
         _statusMessage.value = "Images removed."
@@ -288,7 +292,7 @@ object OverlayStateManager {
 
             activeRequest = scope.launch(start = CoroutineStart.LAZY) {
                 try {
-                    val encoded = withContext(Dispatchers.Default) { attachments.map { BitmapUtils.toBase64Jpeg(it) } }
+                    val encoded = if (attachments.isEmpty()) emptyList() else withContext(Dispatchers.Default) { attachments.map { BitmapUtils.toBase64Jpeg(it) } }
                     if (version != requestVersion) return@launch
                     _chatMessages.value = _chatMessages.value.map {
                         if (it.id == userMessage.id) it.copy(imagesBase64 = encoded) else it

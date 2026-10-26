@@ -135,12 +135,12 @@ fun OverlayPanelView(
                         Row(Modifier.fillMaxWidth().testTag("attachment_strip"), verticalAlignment = Alignment.CenterVertically) {
                             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 images.forEachIndexed { index, bitmap ->
-                                    Box(Modifier.size(56.dp).border(1.dp, if (bitmap === currentImage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))) {
+                                    Row(Modifier.width(88.dp).height(56.dp).border(1.dp, if (bitmap === currentImage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp)), verticalAlignment = Alignment.CenterVertically) {
                                         Image(bitmap.asImageBitmap(), "Preview image ${index + 1}", contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)).clickable {
+                                            modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).clickable {
                                                 OverlayStateManager.selectImage(bitmap); preview = true
                                             }.testTag("attachment_$index"))
-                                        Surface(Modifier.align(Alignment.TopEnd), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f), shape = RoundedCornerShape(bottomStart = 6.dp)) {
+                                        Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(6.dp)) {
                                             IconButton(onClick = { OverlayStateManager.removeImage(bitmap) }, modifier = Modifier.size(32.dp).testTag("remove_attachment_$index")) {
                                                 Icon(Icons.Default.Close, "Remove image ${index + 1}", Modifier.size(14.dp))
                                             }
