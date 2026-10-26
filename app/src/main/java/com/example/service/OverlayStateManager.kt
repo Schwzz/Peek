@@ -129,7 +129,7 @@ object OverlayStateManager {
         val scaled = BitmapUtils.scaleDownIfNeeded(bitmap)
         _images.value = _images.value + scaled
         _currentImage.value = scaled
-        _statusMessage.value = "${_images.value.size} image(s) ready."
+        _statusMessage.value = if (_images.value.size == 1) "Image ready." else "${_images.value.size} images ready."
         _errorMessage.value = null
         return true
     }
@@ -205,7 +205,7 @@ object OverlayStateManager {
                 // Decode sequentially to bound peak memory. Enforce our own limit because
                 // older document pickers can ignore PickMultipleVisualMedia's limit.
                 val available = (MAX_IMAGES - _images.value.size).coerceAtLeast(0)
-                if (uris.size > available) _errorMessage.value = "Only $available more image(s) fit; the limit is $MAX_IMAGES."
+                if (uris.size > available) _errorMessage.value = "There is room for $available more. You can attach up to $MAX_IMAGES images."
                 for (uri in uris.take(available)) {
                     try {
                         val bitmap = ImageLoader.decode(appContext, uri)
@@ -213,8 +213,8 @@ object OverlayStateManager {
                     } catch (e: CancellationException) { throw e }
                     catch (_: Exception) { failures++ }
                 }
-                if (failures > 0) _errorMessage.value = "Could not open $failures image(s). Try another file."
-                else if (uris.size > available) _errorMessage.value = "Added $available image(s). You can attach up to $MAX_IMAGES."
+                if (failures > 0) _errorMessage.value = "Could not open $failures of the selected images. Try another file."
+                else if (uris.size > available) _errorMessage.value = "Added $available. You can attach up to $MAX_IMAGES images."
                 setPanelExpanded(true)
             } finally {
                 if (loadVersion == imageLoadVersion) _isLoadingImages.value = false

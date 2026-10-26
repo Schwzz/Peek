@@ -62,6 +62,7 @@ fun OverlayPanelView(
     val loading by OverlayStateManager.isLoading.collectAsState()
     val error by OverlayStateManager.errorMessage.collectAsState()
     val prompt by OverlayStateManager.draftPrompt.collectAsState()
+    val imageTarget = if (images.size == 1) "this image" else "these images"
     val list = rememberLazyListState()
     var menu by remember { mutableStateOf(false) }
     var modelMenu by remember { mutableStateOf(false) }
@@ -159,7 +160,7 @@ fun OverlayPanelView(
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         if (messages.isEmpty() && !loading) {
                             Column(Modifier.align(Alignment.TopStart).padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(if (currentImage == null) "No selection yet" else "${images.size} image(s) ready", style = MaterialTheme.typography.titleSmall)
+                                Text(if (currentImage == null) "No selection yet" else if (images.size == 1) "Image ready" else "${images.size} images ready", style = MaterialTheme.typography.titleSmall)
                                 Text(if (currentImage == null) "Select a screen region, open an image, or type a question." else "Ask a question or compare your attached images.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
@@ -174,13 +175,13 @@ fun OverlayPanelView(
                     if (!compact && messages.isEmpty() && currentImage != null) {
                         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             listOf("Explain", "Read text", "Translate").forEach { tool ->
-                                TextButton(onClick = { if (OverlayStateManager.sendPrompt(if (tool == "Read text") "Extract the text from this image." else "$tool this image.", context)) OverlayStateManager.setDraftPrompt("") }, enabled = !loading, contentPadding = PaddingValues(horizontal = 10.dp)) { Text(tool, style = MaterialTheme.typography.labelMedium) }
+                                TextButton(onClick = { if (OverlayStateManager.sendPrompt(if (tool == "Read text") "Extract the text from $imageTarget." else "$tool $imageTarget.", context)) OverlayStateManager.setDraftPrompt("") }, enabled = !loading, contentPadding = PaddingValues(horizontal = 10.dp)) { Text(tool, style = MaterialTheme.typography.labelMedium) }
                             }
                         }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(value = prompt, onValueChange = OverlayStateManager::setDraftPrompt,
-                            placeholder = { Text(if (currentImage == null) "Ask a question" else "Ask about these images", style = MaterialTheme.typography.bodyMedium) },
+                            placeholder = { Text(if (currentImage == null) "Ask a question" else if (images.size == 1) "Ask about this image" else "Ask about these images", style = MaterialTheme.typography.bodyMedium) },
                             modifier = Modifier.weight(1f).heightIn(max = 100.dp).testTag("overlay_prompt_input"), maxLines = 3,
                             shape = RoundedCornerShape(8.dp), textStyle = MaterialTheme.typography.bodyMedium,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }))
