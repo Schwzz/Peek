@@ -11,7 +11,8 @@ class GeometryTest {
                 val menu = OverlayGeometry.toolboxBounds(x, y, width, height, 1f)
                 assertTrue(menu.x >= 0 && menu.x + menu.width <= width)
                 assertTrue(menu.y >= 0 && menu.y + menu.height <= height)
-                assertTrue(menu.y >= y + 60 || menu.y + menu.height <= y)
+                assertTrue(menu.x >= x + 60 || menu.x + menu.width <= x)
+                assertTrue(menu.y <= y + 60 && menu.y + menu.height >= y)
             }
         }
     }

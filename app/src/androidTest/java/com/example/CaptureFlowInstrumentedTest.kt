@@ -78,6 +78,10 @@ class CaptureFlowInstrumentedTest {
         assertFalse("Opening the toolbox started selection", OverlayStateManager.isCapturing.value)
         assertNull(OverlayStateManager.capturedScreenToCrop.value)
         assertEquals("Opening the toolbox requested a screenshot", version, OverlayStateManager.captureVersion)
+        val bubble = checkNotNull(device.findObject(By.desc("Open Peek toolbox"))).visibleBounds
+        val select = checkNotNull(device.findObject(By.desc("Select screen"))).visibleBounds
+        assertTrue("Toolbox was not beside the button: $select vs $bubble", select.left >= bubble.right || select.right <= bubble.left)
+        assertFalse(device.hasObject(By.desc("Toolbox settings")))
         assertOtherAppRemainsResumed()
     }
 
@@ -204,7 +208,7 @@ class CaptureFlowInstrumentedTest {
             awaitState("Explicit stop did not release projection") { !OverlayStateManager.isScreenSharing.value }
             openToolbox()
             assertFalse("Opening tools requested screen permission", OverlayStateManager.isStartingScreenSharing.value)
-            click(By.desc("Add image"))
+            click(By.desc("Add images"))
             awaitState("System image picker did not open") {
                 device.executeShellCommand("dumpsys activity activities").lineSequence().any {
                     (it.contains("mResumedActivity") || it.contains("topResumedActivity")) &&
@@ -214,13 +218,44 @@ class CaptureFlowInstrumentedTest {
             evidence("image-picker")
             device.pressBack()
             awaitState("Image picker did not return to the toolbox") {
-                OverlayStateManager.isToolboxExpanded.value && device.hasObject(By.desc("Close toolbox"))
+                OverlayStateManager.isToolboxExpanded.value && device.hasObject(By.desc("Stop overlay"))
             }
             assertOtherAppRemainsResumed()
-            click(By.desc("Close toolbox"))
+            click(By.desc("Open Peek toolbox"))
+            // Exercise the same import callback used by the multi-select picker with
+            // two real files, then verify both JPEGs reach the local model.
+            val files = listOf(android.graphics.Color.BLUE, android.graphics.Color.RED).mapIndexed { index, color ->
+                File(context.cacheDir, "attachment-$index.png").also { file ->
+                    val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).apply { eraseColor(color) }
+                    file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+                }
+            }
+            instrumentation.runOnMainSync { com.example.util.PickedImageImporter.load(context, files.map { android.net.Uri.fromFile(it) }) }
+            awaitState("Multiple images did not reach chat") { OverlayStateManager.images.value.size == 2 && !OverlayStateManager.isLoadingImages.value }
+            checkNotNull(device.wait(Until.findObject(By.text("2/6")), 5000))
+            evidence("multiple-attachments")
+            server.enqueue(MockResponse().setBody("""{"message":{"content":"Both images received"}}"""))
+            click(By.clazz("android.widget.EditText"))
+            checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)).text = "Compare both images"
+            click(By.desc("Send question"))
+            awaitState("Multi-image answer did not reach chat") { OverlayStateManager.chatMessages.value.any { it.text == "Both images received" } }
+            val multiple = JSONObject(checkNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()).getJSONArray("messages")
+            val sent = multiple.getJSONObject(multiple.length() - 1).getJSONArray("images")
+            assertEquals(2, sent.length())
+            assertNotEquals(sent.getString(0), sent.getString(1))
+            assertTrue(OverlayStateManager.images.value.isEmpty())
+            files.forEach { it.delete() }
+            assertOtherAppRemainsResumed()
+            evidence("multiple-image-answer")
+            click(By.desc("Minimize to bubble"))
             preferences.setButtonOpacity(0.4f)
             device.waitForIdle()
             evidence("faded-floating-button")
+            openToolbox()
+            click(By.desc("Stop overlay"))
+            awaitState("Stop in the toolbox did not stop the overlay") { !OverlayStateManager.isServiceRunning.value }
+            assertFalse(OverlayStateManager.isScreenSharing.value)
+            assertOtherAppRemainsResumed()
         } finally {
             evidence("capture-final")
             scenario?.close()

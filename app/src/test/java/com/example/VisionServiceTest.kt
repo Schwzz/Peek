@@ -25,11 +25,11 @@ class VisionServiceTest {
             server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"answer"}}]}"""))
             val config = ApiConfig(provider = VisionAiProvider.OPENAI_COMPATIBLE, baseUrl = server.url("/v1/").toString(), modelName = "test-model")
             val history = listOf(
-                ChatMessage(sender = MessageSender.USER, text = "old picture", imageBase64 = "encoded-original", hasImageAttachment = true),
+                ChatMessage(sender = MessageSender.USER, text = "old picture", imagesBase64 = listOf("encoded-original"), hasImageAttachment = true),
                 ChatMessage(sender = MessageSender.AI, text = "old answer"),
                 ChatMessage(sender = MessageSender.USER, text = "cancelled", isCancelled = true)
             )
-            val result = OpenAiVisionService().analyze(null, "followup", history, config, "fake-key")
+            val result = OpenAiVisionService().analyze(emptyList(), "followup", history, config, "fake-key")
             assertEquals("answer", result.getOrThrow())
             val request = server.takeRequest(5, TimeUnit.SECONDS)!!
             assertEquals("/v1/chat/completions", request.path)
@@ -45,7 +45,7 @@ class VisionServiceTest {
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
             val config = ApiConfig(provider = VisionAiProvider.OPENAI_COMPATIBLE, baseUrl = server.url("/").toString())
             val job = launch(Dispatchers.Default) {
-                OpenAiVisionService().analyze(null, "test", emptyList(), config, "fake-key")
+                OpenAiVisionService().analyze(emptyList(), "test", emptyList(), config, "fake-key")
                 fail("Cancelled request returned a result")
             }
             assertNotNull(withContext(Dispatchers.IO) { server.takeRequest(5, TimeUnit.SECONDS) })

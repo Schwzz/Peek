@@ -66,9 +66,9 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
     LaunchedEffect(image, running) { if (image != null && !running) showChat = true }
     BackHandler(enabled = showChat) { showChat = false }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) {
-            OverlayStateManager.loadImage(context, uri)
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(OverlayStateManager.MAX_IMAGES)) { uris ->
+        if (uris.isNotEmpty()) {
+            com.example.util.PickedImageImporter.load(context, uris)
             showChat = true
         }
     }

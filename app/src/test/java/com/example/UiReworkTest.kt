@@ -95,23 +95,52 @@ class UiReworkTest {
     }
 
     @Test fun toolboxActionsStayAlignedAndOnlyRunWhenChosen() {
-        var selected = 0; var images = 0; var chats = 0
-        ui.setContent { PeekTheme { androidx.compose.foundation.layout.Box(Modifier.width(232.dp)) {
-            com.example.ui.components.OverlayToolboxView({ selected++ }, { images++ }, { chats++ }, {}, {})
+        var selected = 0; var images = 0; var chats = 0; var stops = 0
+        ui.setContent { PeekTheme { androidx.compose.foundation.layout.Box(Modifier.width(88.dp)) {
+            com.example.ui.components.OverlayToolboxView({ selected++ }, { images++ }, { chats++ }, { stops++ })
         } } }
         val select = ui.onNodeWithTag("toolbox_select").fetchSemanticsNode().boundsInRoot
         val image = ui.onNodeWithTag("toolbox_image").fetchSemanticsNode().boundsInRoot
         val chat = ui.onNodeWithTag("toolbox_chat").fetchSemanticsNode().boundsInRoot
-        Assert.assertEquals(select.top, image.top, 0.1f)
+        Assert.assertEquals(select.left, image.left, 0.1f)
+        Assert.assertTrue(image.top >= select.bottom)
         Assert.assertEquals(select.height, chat.height, 0.1f)
         Assert.assertEquals(select.width, image.width, 1f)
+        ui.onNodeWithText("Peek").assertDoesNotExist()
+        ui.onNodeWithContentDescription("Toolbox settings").assertDoesNotExist()
         Assert.assertEquals(0, selected)
         ui.onNodeWithTag("toolbox_chat").performClick()
         ui.runOnIdle { Assert.assertEquals(1, chats); Assert.assertEquals(0, selected); Assert.assertEquals(0, images) }
         ui.onNodeWithTag("toolbox_image").performClick()
         ui.onNodeWithTag("toolbox_select").performClick()
         ui.runOnIdle { Assert.assertEquals(1, images); Assert.assertEquals(1, selected) }
+        ui.onNodeWithTag("toolbox_stop").performClick()
+        ui.runOnIdle { Assert.assertEquals(1, stops) }
         screenshot("toolbox")
+    }
+
+    @Test fun multipleAttachmentsCanBePreviewedCroppedAndRemovedIndividually() {
+        val first = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.BLUE) }
+        val second = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
+        OverlayStateManager.appendImage(first); OverlayStateManager.appendImage(second)
+        var crops = 0
+        ui.setContent { PeekTheme { androidx.compose.foundation.layout.Box(Modifier.width(320.dp).height(440.dp)) {
+            OverlayPanelView(modifier = Modifier.fillMaxSize(), onCaptureScreenRequested = {}, onPickImageRequested = {},
+                onMinimizeRequested = {}, onCloseRequested = {}, onOpenSettingsRequested = {}, onCropImageRequested = { crops++ })
+        } } }
+        ui.onNodeWithTag("attachment_0").assertIsDisplayed()
+        ui.onNodeWithTag("attachment_1").assertIsDisplayed()
+        ui.onNodeWithText("2/6").assertIsDisplayed()
+        ui.onNodeWithText("Resize").assertIsDisplayed()
+        screenshot("multiple-attachments")
+        ui.onNodeWithTag("attachment_0").performClick()
+        ui.runOnIdle { Assert.assertSame(first, OverlayStateManager.currentImage.value) }
+        ui.onNodeWithTag("image_preview_back").performClick()
+        ui.onNodeWithTag("overlay_recrop_button").performClick()
+        ui.runOnIdle { Assert.assertEquals(1, crops) }
+        ui.onNodeWithTag("remove_attachment_0").performClick()
+        ui.onNodeWithText("1/6").assertIsDisplayed()
+        ui.runOnIdle { Assert.assertEquals(listOf(second), OverlayStateManager.images.value) }
     }
 
     @Test fun sendButtonStaysCenteredWithSingleAndMultilineInput() {

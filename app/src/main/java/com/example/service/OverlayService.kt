@@ -268,8 +268,7 @@ class OverlayService : Service() {
                         onSelect = { requestScreenCapture() },
                         onAddImage = { openImagePicker() },
                         onChat = { OverlayStateManager.setPanelExpanded(true) },
-                        onSettings = { openSettings() },
-                        onDismiss = { OverlayStateManager.setToolboxExpanded(false) }
+                        onStop = { stopSelf() }
                     )
                 }
             }
@@ -302,7 +301,7 @@ class OverlayService : Service() {
             }
         }
         toolboxParams = WindowManager.LayoutParams(
-            (232 * displayMetrics.density).toInt(), (120 * displayMetrics.density).toInt(), layoutFlag,
+            (88 * displayMetrics.density).toInt(), (240 * displayMetrics.density).toInt(), layoutFlag,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, PixelFormat.TRANSLUCENT
         ).apply {
@@ -324,7 +323,7 @@ class OverlayService : Service() {
                                 try {
                                     val crop = withContext(Dispatchers.Default) { BitmapUtils.crop(screenshot, rect) }
                                     if (OverlayStateManager.isCapturing.value && OverlayStateManager.captureVersion == version) {
-                                        OverlayStateManager.setCurrentImage(crop)
+                                        OverlayStateManager.completeImageSelection(crop)
                                         OverlayStateManager.finishCapture()
                                     } else if (crop !== screenshot) crop.recycle()
                                 } catch (e: Exception) {
@@ -489,7 +488,7 @@ class OverlayService : Service() {
 
     private fun cropImage() {
         val bitmap = OverlayStateManager.currentImage.value ?: return
-        if (OverlayStateManager.beginCapture()) OverlayStateManager.setCapturedScreenToCrop(bitmap)
+        if (OverlayStateManager.beginCapture(replaceCurrentImage = true)) OverlayStateManager.setCapturedScreenToCrop(bitmap)
     }
 
     private fun observeState() {

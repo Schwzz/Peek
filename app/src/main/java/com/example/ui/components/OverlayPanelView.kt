@@ -55,6 +55,8 @@ fun OverlayPanelView(
     val context = LocalContext.current
     val repo = remember { ApiConfigRepository.getInstance(context) }
     val config by repo.configFlow.collectAsState()
+    val images by OverlayStateManager.images.collectAsState()
+    val loadingImages by OverlayStateManager.isLoadingImages.collectAsState()
     val currentImage by OverlayStateManager.currentImage.collectAsState()
     val messages by OverlayStateManager.chatMessages.collectAsState()
     val loading by OverlayStateManager.isLoading.collectAsState()
@@ -88,7 +90,6 @@ fun OverlayPanelView(
                             Text("Peek", style = MaterialTheme.typography.titleMedium)
                         }
                         IconButton(onClick = onCaptureScreenRequested, modifier = Modifier.size(40.dp).testTag("overlay_quick_capture_button")) { Icon(Icons.Default.CropFree, "Select screen region", Modifier.size(20.dp)) }
-                        if (compact && currentImage != null) IconButton(onClick = { preview = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Default.Image, "Preview attached image", Modifier.size(20.dp)) }
                         Box {
                             IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp).testTag("overlay_menu_button")) { Icon(Icons.Default.MoreHoriz, "Conversation actions", Modifier.size(20.dp)) }
                             DropdownMenu(menu, { menu = false }) {
@@ -129,23 +130,37 @@ fun OverlayPanelView(
                             IconButton(onClick = { OverlayStateManager.setErrorMessage(null) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Close, "Dismiss error", Modifier.size(16.dp)) }
                         }
                     }
-                    if (!compact) currentImage?.let { bitmap ->
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Image(bitmap.asImageBitmap(), "Preview attached image", contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(4.dp)).clickable { preview = true }.testTag("image_preview_button"))
-                            Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                                Text("Selection", style = MaterialTheme.typography.labelMedium)
-                                Text("${bitmap.width} × ${bitmap.height}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (loadingImages) Text("Loading images…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (images.isNotEmpty() && !tiny) {
+                        Row(Modifier.fillMaxWidth().testTag("attachment_strip"), verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                images.forEachIndexed { index, bitmap ->
+                                    Box(Modifier.size(56.dp).border(1.dp, if (bitmap === currentImage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(6.dp))) {
+                                        Image(bitmap.asImageBitmap(), "Preview image ${index + 1}", contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(6.dp)).clickable {
+                                                OverlayStateManager.selectImage(bitmap); preview = true
+                                            }.testTag("attachment_$index"))
+                                        Surface(Modifier.align(Alignment.TopEnd), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f), shape = RoundedCornerShape(bottomStart = 6.dp)) {
+                                            IconButton(onClick = { OverlayStateManager.removeImage(bitmap) }, modifier = Modifier.size(32.dp).testTag("remove_attachment_$index")) {
+                                                Icon(Icons.Default.Close, "Remove image ${index + 1}", Modifier.size(14.dp))
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            IconButton(onClick = onCropImageRequested, modifier = Modifier.size(36.dp).testTag("overlay_recrop_button")) { Icon(Icons.Default.Crop, "Crop attached image", Modifier.size(18.dp)) }
-                            IconButton(onClick = { OverlayStateManager.clearImage() }, modifier = Modifier.size(36.dp).testTag("overlay_remove_image_button")) { Icon(Icons.Default.Close, "Remove image", Modifier.size(18.dp)) }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${images.size}/${OverlayStateManager.MAX_IMAGES}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                IconButton(onClick = onCropImageRequested, modifier = Modifier.size(36.dp).testTag("overlay_recrop_button")) {
+                                    Icon(Icons.Default.Crop, "Crop selected image", Modifier.size(18.dp))
+                                }
+                            }
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         if (messages.isEmpty() && !loading) {
                             Column(Modifier.align(Alignment.TopStart).padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(if (currentImage == null) "No selection yet" else "Selection ready", style = MaterialTheme.typography.titleSmall)
-                                Text(if (currentImage == null) "Select a screen region, open an image, or type a question." else "Ask about the image below.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (currentImage == null) "No selection yet" else "${images.size} image(s) ready", style = MaterialTheme.typography.titleSmall)
+                                Text(if (currentImage == null) "Select a screen region, open an image, or type a question." else "Ask a question or compare your attached images.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
                             LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("chat_messages"), contentPadding = PaddingValues(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -165,11 +180,11 @@ fun OverlayPanelView(
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(value = prompt, onValueChange = OverlayStateManager::setDraftPrompt,
-                            placeholder = { Text(if (currentImage == null) "Ask a question" else "Ask about this selection", style = MaterialTheme.typography.bodyMedium) },
+                            placeholder = { Text(if (currentImage == null) "Ask a question" else "Ask about these images", style = MaterialTheme.typography.bodyMedium) },
                             modifier = Modifier.weight(1f).heightIn(max = 100.dp).testTag("overlay_prompt_input"), maxLines = 3,
                             shape = RoundedCornerShape(8.dp), textStyle = MaterialTheme.typography.bodyMedium,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }))
-                        IconButton(onClick = ::send, enabled = loading || prompt.isNotBlank() || currentImage != null, modifier = Modifier.testTag("overlay_send_button")) {
+                        IconButton(onClick = ::send, enabled = loading || (!loadingImages && (prompt.isNotBlank() || images.isNotEmpty())), modifier = Modifier.testTag("overlay_send_button")) {
                             Icon(if (loading) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send, if (loading) "Stop generating" else "Send question", Modifier.size(20.dp))
                         }
                     }
@@ -180,14 +195,17 @@ fun OverlayPanelView(
                         TextButton(onClick = { attachments = true }, contentPadding = PaddingValues(horizontal = 6.dp), modifier = Modifier.testTag("overlay_add_image_button")) { Icon(Icons.Default.Add, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Attach", style = MaterialTheme.typography.labelSmall) }
                         DropdownMenu(attachments, { attachments = false }) {
                             DropdownMenuItem(text = { Text("Select screen region") }, onClick = { attachments = false; onCaptureScreenRequested() }, modifier = Modifier.testTag("overlay_capture_screen_button"))
-                            DropdownMenuItem(text = { Text("Open image") }, onClick = { attachments = false; onPickImageRequested() }, modifier = Modifier.testTag("overlay_upload_image_button"))
+                            DropdownMenuItem(text = { Text("Add images") }, onClick = { attachments = false; onPickImageRequested() }, modifier = Modifier.testTag("overlay_upload_image_button"))
                         }
                     }
                     Spacer(Modifier.weight(1f))
-                    Text(config.provider.displayName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                    if (isFloating) Box(Modifier.size(32.dp).testTag("overlay_resize_handle").pointerInput(onResize) {
+                    if (isFloating) Row(Modifier.width(76.dp).height(32.dp).testTag("overlay_resize_handle").pointerInput(onResize) {
                         detectDragGestures(onDragEnd = onGeometryChanged, onDragCancel = onGeometryChanged) { change, amount -> change.consume(); onResize(amount.x, amount.y) }
-                    }, contentAlignment = Alignment.Center) { Icon(Icons.Default.SouthEast, "Drag to resize", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.End) {
+                        Text("Resize", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Default.SouthEast, "Drag to resize chat", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
@@ -207,7 +225,7 @@ fun ChatMessageBubble(msg: ChatMessage, onCopy: (String) -> Unit) {
         Spacer(Modifier.height(4.dp))
         Surface(shape = RoundedCornerShape(8.dp), color = if (user) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent) {
             Column(Modifier.padding(if (user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (msg.hasImageAttachment) Text("Image attached", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (msg.hasImageAttachment) Text(if (msg.imageCount == 1) "1 image attached" else "${msg.imageCount} images attached", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 SelectionContainer {
                     if (user || msg.isError) Text(msg.text, style = MaterialTheme.typography.bodyMedium, color = if (msg.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
                     else MarkdownText(msg.text)

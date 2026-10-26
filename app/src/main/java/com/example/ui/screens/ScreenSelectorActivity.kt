@@ -20,7 +20,7 @@ class ScreenSelectorActivity : ComponentActivity() {
         fun cropCurrentImage(context: Context) {
             if (com.example.service.OverlayService.cropCurrentImage(context)) return
             val image = OverlayStateManager.currentImage.value ?: return
-            if (!OverlayStateManager.beginCapture()) return
+            if (!OverlayStateManager.beginCapture(replaceCurrentImage = true)) return
             OverlayStateManager.setCapturedScreenToCrop(image)
             runCatching {
                 context.startActivity(Intent(context, ScreenSelectorActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -48,7 +48,7 @@ class ScreenSelectorActivity : ComponentActivity() {
                         capturedBitmap = capturedBitmap!!,
                         onSelectionConfirmed = { cropRect ->
                             val cropped = BitmapUtils.crop(capturedBitmap!!, cropRect)
-                            OverlayStateManager.setCurrentImage(cropped)
+                            OverlayStateManager.completeImageSelection(cropped)
                             OverlayStateManager.finishCapture()
                             finish()
                         },

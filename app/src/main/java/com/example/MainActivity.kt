@@ -41,10 +41,10 @@ class MainActivity : ComponentActivity() {
 
                 // Image picker launcher for intent-triggered pick
                 val photoPickerLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.PickVisualMedia()
-                ) { uri: Uri? ->
-                    if (uri != null) {
-                        OverlayStateManager.loadImage(applicationContext, uri)
+                    contract = ActivityResultContracts.PickMultipleVisualMedia(OverlayStateManager.MAX_IMAGES)
+                ) { uris ->
+                    if (uris.isNotEmpty()) {
+                        com.example.util.PickedImageImporter.load(applicationContext, uris)
                     } else if (OverlayStateManager.isServiceRunning.value) {
                         OverlayStateManager.setPanelExpanded(true)
                     }

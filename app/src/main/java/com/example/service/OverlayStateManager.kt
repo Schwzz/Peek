@@ -54,9 +54,12 @@ object OverlayStateManager {
     var captureRequestedAt = 0L
         private set
 
-    fun beginCapture(): Boolean {
+    private var imageToReplace: Bitmap? = null
+
+    fun beginCapture(replaceCurrentImage: Boolean = false): Boolean {
         if (_isCapturing.value) return false
         _isToolboxExpanded.value = false
+        imageToReplace = if (replaceCurrentImage) _currentImage.value else null
         captureVersion++
         captureRequestedAt = System.nanoTime() / 1_000_000
         _isCapturing.value = true
@@ -66,9 +69,16 @@ object OverlayStateManager {
     fun finishCapture(showPanel: Boolean = true) {
         captureVersion++
         _capturedScreenToCrop.value = null
+        imageToReplace = null
         setPanelExpanded(showPanel)
         _isCapturing.value = false
     }
+
+    const val MAX_IMAGES = 6
+    private val _images = MutableStateFlow<List<Bitmap>>(emptyList())
+    val images: StateFlow<List<Bitmap>> = _images.asStateFlow()
+    private val _isLoadingImages = MutableStateFlow(false)
+    val isLoadingImages: StateFlow<Boolean> = _isLoadingImages.asStateFlow()
 
     private val _currentImage = MutableStateFlow<Bitmap?>(null)
     val currentImage: StateFlow<Bitmap?> = _currentImage.asStateFlow()
@@ -105,12 +115,42 @@ object OverlayStateManager {
         setPanelExpanded(!_isPanelExpanded.value)
     }
 
+    // Kept as a single-image reset for session setup; capture/import use appendImage.
     fun setCurrentImage(bitmap: Bitmap?) {
+        _images.value = listOfNotNull(bitmap)
         _currentImage.value = bitmap
-        if (bitmap != null) {
-            _statusMessage.value = "Image ready (${bitmap.width}x${bitmap.height}px). Ask a question!"
-            _errorMessage.value = null
+    }
+
+    fun appendImage(bitmap: Bitmap): Boolean {
+        if (_images.value.size >= MAX_IMAGES) {
+            _errorMessage.value = "You can attach up to $MAX_IMAGES images. Remove an image before adding more."
+            return false
         }
+        val scaled = BitmapUtils.scaleDownIfNeeded(bitmap)
+        _images.value = _images.value + scaled
+        _currentImage.value = scaled
+        _statusMessage.value = "${_images.value.size} image(s) ready."
+        _errorMessage.value = null
+        return true
+    }
+
+    fun selectImage(bitmap: Bitmap) {
+        if (bitmap in _images.value) _currentImage.value = bitmap
+    }
+
+    fun removeImage(bitmap: Bitmap) {
+        _images.value = _images.value.filterNot { it === bitmap }
+        if (_currentImage.value === bitmap) _currentImage.value = _images.value.lastOrNull()
+    }
+
+    fun completeImageSelection(bitmap: Bitmap) {
+        val target = imageToReplace
+        val index = _images.value.indexOf(target)
+        if (target != null && index >= 0) {
+            val scaled = BitmapUtils.scaleDownIfNeeded(bitmap)
+            _images.value = _images.value.toMutableList().apply { set(index, scaled) }
+            _currentImage.value = scaled
+        } else appendImage(bitmap)
     }
 
     fun setCapturedScreenToCrop(bitmap: Bitmap?) {
@@ -118,9 +158,12 @@ object OverlayStateManager {
     }
 
     fun clearImage() {
+        imageLoadVersion++
         imageLoad?.cancel()
+        _isLoadingImages.value = false
+        _images.value = emptyList()
         _currentImage.value = null
-        _statusMessage.value = "Image removed."
+        _statusMessage.value = "Images removed."
     }
 
     fun clearChat() {
@@ -144,24 +187,43 @@ object OverlayStateManager {
     private var activeUserMessageId: String? = null
     private var requestVersion = 0L
     private var imageLoad: Job? = null
+    private var imageLoadVersion = 0L
 
-    fun loadImage(context: Context, uri: Uri, onFinished: () -> Unit = {}) {
+    fun loadImages(context: Context, uris: List<Uri>, onFinished: () -> Unit = {}) {
+        val loadVersion = ++imageLoadVersion
         imageLoad?.cancel()
         val appContext = context.applicationContext
-        _statusMessage.value = "Loading image..."
-        imageLoad = scope.launch {
+        _isLoadingImages.value = true
+        _statusMessage.value = "Loading images…"
+        imageLoad = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            var failures = 0
             try {
-                setCurrentImage(ImageLoader.decode(appContext, uri))
+                // Decode sequentially to bound peak memory. Enforce our own limit because
+                // older document pickers can ignore PickMultipleVisualMedia's limit.
+                val available = (MAX_IMAGES - _images.value.size).coerceAtLeast(0)
+                if (uris.size > available) _errorMessage.value = "Only $available more image(s) fit; the limit is $MAX_IMAGES."
+                for (uri in uris.take(available)) {
+                    try {
+                        val bitmap = ImageLoader.decode(appContext, uri)
+                        if (!appendImage(bitmap)) bitmap.recycle()
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) { failures++ }
+                }
+                if (failures > 0) _errorMessage.value = "Could not open $failures image(s). Try another file."
+                else if (uris.size > available) _errorMessage.value = "Added $available image(s). You can attach up to $MAX_IMAGES."
                 setPanelExpanded(true)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                setErrorMessage("Failed to load image: ${e.localizedMessage}")
-                if (_isServiceRunning.value) setPanelExpanded(true)
             } finally {
+                if (loadVersion == imageLoadVersion) _isLoadingImages.value = false
                 onFinished()
             }
         }
+    }
+
+    // Only the six most recent valid messages are sent. Release image strings in
+    // older UI rows instead of keeping sixty turns of full image data in memory.
+    private fun trimHistoryImages(messages: List<ChatMessage>): List<ChatMessage> {
+        val retained = messages.filterNot { it.isError || it.isCancelled }.takeLast(6).map { it.id }.toSet()
+        return messages.map { if (it.id !in retained && it.imagesBase64.isNotEmpty()) it.copy(imagesBase64 = emptyList()) else it }
     }
 
     fun cancelRequest() = synchronized(requestLock) {
@@ -189,7 +251,7 @@ object OverlayStateManager {
 
     internal fun sendPrompt(
         prompt: String,
-        analyze: suspend (String?, String, List<ChatMessage>) -> Result<String>
+        analyze: suspend (List<String>, String, List<ChatMessage>) -> Result<String>
     ): Boolean {
         synchronized(requestLock) {
             if (_isLoading.value) {
@@ -197,47 +259,58 @@ object OverlayStateManager {
             }
 
             val trimmed = prompt.trim()
-            val image = _currentImage.value
+            val attachments = _images.value.toList()
+            if (_isLoadingImages.value) {
+                _errorMessage.value = "Wait for the images to finish loading."
+                return false
+            }
 
-            if (trimmed.isEmpty() && image == null) {
+            if (trimmed.isEmpty() && attachments.isEmpty()) {
                 _errorMessage.value = "Please select an image or type a prompt first."
                 return false
             }
 
-            val displayPrompt = trimmed.ifEmpty { "Explain this image" }
+            val displayPrompt = trimmed.ifEmpty { "Explain these images" }
             val userMessage = ChatMessage(
                 sender = MessageSender.USER,
                 text = displayPrompt,
-                hasImageAttachment = image != null
+                hasImageAttachment = attachments.isNotEmpty(),
+                imageCount = attachments.size
             )
 
             val history = _chatMessages.value.toList()
             val version = ++requestVersion
             activeUserMessageId = userMessage.id
-            _chatMessages.value = (_chatMessages.value + userMessage).takeLast(60)
+            _chatMessages.value = trimHistoryImages((_chatMessages.value + userMessage).takeLast(60))
             _isLoading.value = true
             _errorMessage.value = null
             _statusMessage.value = "Peek is analyzing with AI..."
 
             activeRequest = scope.launch(start = CoroutineStart.LAZY) {
                 try {
-                    val encoded = if (image == null) null else withContext(Dispatchers.Default) { BitmapUtils.toBase64Jpeg(image) }
+                    val encoded = withContext(Dispatchers.Default) { attachments.map { BitmapUtils.toBase64Jpeg(it) } }
                     if (version != requestVersion) return@launch
                     _chatMessages.value = _chatMessages.value.map {
-                        if (it.id == userMessage.id) it.copy(imageBase64 = encoded) else it
+                        if (it.id == userMessage.id) it.copy(imagesBase64 = encoded) else it
                     }
                     val result = analyze(encoded, displayPrompt, history)
                     if (version != requestVersion) return@launch
 
                     result.onSuccess { aiResponse ->
+                        // Submitted attachments live in the turn history. A follow-up does not
+                        // resend them as another current attachment unless the user adds them.
+                        _images.value = _images.value.filterNot { it in attachments }
+                        if (_currentImage.value in attachments) _currentImage.value = _images.value.lastOrNull()
+
                         val aiMessage = ChatMessage(
                             sender = MessageSender.AI,
                             text = aiResponse
                         )
-                        _chatMessages.value = _chatMessages.value + aiMessage
+                        _chatMessages.value = trimHistoryImages(_chatMessages.value + aiMessage)
                         _statusMessage.value = "Analysis complete. You can ask follow-up questions."
                     }.onFailure { error ->
                         val errorText = error.localizedMessage ?: "Failed to generate AI response."
+                        _chatMessages.value = _chatMessages.value.map { if (it.id == userMessage.id) it.copy(isError = true) else it }
                         _errorMessage.value = errorText
                         _chatMessages.value = _chatMessages.value + ChatMessage(
                             sender = MessageSender.AI,

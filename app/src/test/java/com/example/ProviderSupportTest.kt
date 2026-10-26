@@ -27,9 +27,9 @@ class ProviderSupportTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("""{"message":{"content":"local answer"}}"""))
             val config = ApiConfig(VisionAiProvider.OLLAMA, baseUrl = server.url("/api/").toString(), modelName = "vision-local")
-            val history = listOf(ChatMessage(sender = MessageSender.USER, text = "previous", imageBase64 = "old-image"),
+            val history = listOf(ChatMessage(sender = MessageSender.USER, text = "previous", imagesBase64 = listOf("old-image")),
                 ChatMessage(sender = MessageSender.AI, text = "ignored", isCancelled = true))
-            assertEquals("local answer", NativeVisionService().analyze("new-image", "describe", history, config, "").getOrThrow())
+            assertEquals("local answer", NativeVisionService().analyze(listOf("new-image"), "describe", history, config, "").getOrThrow())
             val request = server.takeRequest(5, TimeUnit.SECONDS)!!
             assertEquals("/api/chat", request.path)
             assertNull(request.getHeader("Authorization"))
@@ -47,7 +47,7 @@ class ProviderSupportTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("""{"content":[{"type":"thinking","thinking":"private"},{"type":"text","text":"visible answer"}]}"""))
             val config = ApiConfig(VisionAiProvider.ANTHROPIC, modelName = "vision-cloud")
-            assertEquals("visible answer", NativeVisionService(redirectedClient(server)).analyze("jpeg", "describe", emptyList(), config, "test-secret").getOrThrow())
+            assertEquals("visible answer", NativeVisionService(redirectedClient(server)).analyze(listOf("jpeg"), "describe", emptyList(), config, "test-secret").getOrThrow())
             val request = server.takeRequest(5, TimeUnit.SECONDS)!!
             assertEquals("/v1/messages", request.path)
             assertEquals("test-secret", request.getHeader("x-api-key"))
@@ -66,7 +66,7 @@ class ProviderSupportTest {
             MockWebServer().use { server ->
                 server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"answer"}}]}"""))
                 val config = ApiConfig(provider, modelName = "account-model")
-                assertTrue(OpenAiVisionService(redirectedClient(server)).analyze("jpeg", "question", emptyList(), config, "key-for-${provider.name}").isSuccess)
+                assertTrue(OpenAiVisionService(redirectedClient(server)).analyze(listOf("jpeg"), "question", emptyList(), config, "key-for-${provider.name}").isSuccess)
                 val request = server.takeRequest(5, TimeUnit.SECONDS)!!
                 assertEquals(ProviderEndpoints.url(config, "chat/completions").encodedPath, request.path)
                 assertEquals("Bearer key-for-${provider.name}", request.getHeader("Authorization"))
@@ -80,7 +80,7 @@ class ProviderSupportTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"content":"local"}}]}"""))
             val config = ApiConfig(VisionAiProvider.LM_STUDIO, baseUrl = server.url("/v1/chat/completions").toString(), modelName = "loaded-model")
-            assertTrue(OpenAiVisionService().analyze(null, "hello", emptyList(), config, "").isSuccess)
+            assertTrue(OpenAiVisionService().analyze(emptyList(), "hello", emptyList(), config, "").isSuccess)
             val request = server.takeRequest(5, TimeUnit.SECONDS)!!
             assertEquals("/v1/chat/completions", request.path)
             assertNull(request.getHeader("Authorization"))
@@ -135,7 +135,7 @@ class ProviderSupportTest {
             target.start()
             source.enqueue(MockResponse().setResponseCode(302).addHeader("Location", target.url("/stolen")))
             val config = ApiConfig(VisionAiProvider.LM_STUDIO, baseUrl = source.url("/v1/").toString(), modelName = "local")
-            assertTrue(OpenAiVisionService().analyze(null, "hello", emptyList(), config, "private-token").isFailure)
+            assertTrue(OpenAiVisionService().analyze(emptyList(), "hello", emptyList(), config, "private-token").isFailure)
             assertEquals(0, target.requestCount)
         } }
     }

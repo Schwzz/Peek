@@ -23,7 +23,7 @@ class OpenAiVisionService(
 ) : VisionAiService {
 
     override suspend fun analyze(
-        imageBase64: String?,
+        imagesBase64: List<String>,
         prompt: String,
         history: List<ChatMessage>,
         config: ApiConfig,
@@ -40,47 +40,16 @@ class OpenAiVisionService(
             require(model.isNotBlank()) { "Choose a model in Models first." }
             val messagesArray = JSONArray()
 
-            // Include prior chat history
-            val recentHistory = history.filterNot { it.isError || it.isCancelled }.takeLast(6)
-            for (msg in recentHistory) {
-                if (msg.isError) continue
-                val msgObj = JSONObject()
-                msgObj.put("role", if (msg.sender == MessageSender.USER) "user" else "assistant")
-                if (msg.imageBase64 != null) {
-                    msgObj.put("content", JSONArray()
-                        .put(JSONObject().put("type", "text").put("text", msg.text))
-                        .put(JSONObject().put("type", "image_url").put("image_url",
-                            JSONObject().put("url", "data:image/jpeg;base64,${msg.imageBase64}"))))
-                } else {
-                    msgObj.put("content", msg.text)
-                }
-                messagesArray.put(msgObj)
+            fun append(role: String, text: String, images: List<String>) {
+                val content = JSONArray().put(JSONObject().put("type", "text").put("text", text))
+                images.forEach { image -> content.put(JSONObject().put("type", "image_url")
+                    .put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$image"))) }
+                messagesArray.put(JSONObject().put("role", role).put("content", if (images.isEmpty()) text else content))
             }
-
-            // Current message
-            val currentMsg = JSONObject()
-            currentMsg.put("role", "user")
-
-            val contentArray = JSONArray()
-            val textPrompt = prompt.ifBlank { "Describe what is shown in this image and highlight any key details." }
-            contentArray.put(JSONObject().apply {
-                put("type", "text")
-                put("text", textPrompt)
-            })
-
-            if (imageBase64 != null) {
-                val base64 = imageBase64
-                contentArray.put(JSONObject().apply {
-                    put("type", "image_url")
-                    put("image_url", JSONObject().apply {
-                        put("url", "data:image/jpeg;base64,$base64")
-                    })
-                })
+            history.filterNot { it.isError || it.isCancelled }.takeLast(6).dropWhile { it.sender != MessageSender.USER }.forEach {
+                append(if (it.sender == MessageSender.USER) "user" else "assistant", it.text, it.imagesBase64)
             }
-            // Plain text stays a string for servers that only accept image-block
-            // arrays on their multimodal models (including local compatible APIs).
-            currentMsg.put("content", if (imageBase64 == null) textPrompt else contentArray)
-            messagesArray.put(currentMsg)
+            append("user", prompt.ifBlank { "Describe these images." }, imagesBase64)
 
             val rootJson = JSONObject().apply {
                 put("model", model)

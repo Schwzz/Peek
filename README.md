@@ -9,11 +9,13 @@ An Android screen assistant. Select a region over another app, attach the image,
 3. Use **Test text** to check the connection. **Test image** sends a generated blue swatch to check image understanding; it does not send your current screenshot.
 4. Tap **Use this model**. Each provider retains its own saved settings and encrypted key.
 5. Allow display over other apps, tap **Start Peek**, and approve Android screen sharing.
-6. Return to your other app. Tap the floating button to open the toolbox, then choose **Select**, **Image**, or **Chat**. Selection starts only when you choose Select. Holding the button still opens chat directly.
+6. Return to your other app. Tap the floating button to open the toolbox, then choose **Select**, **Images**, **Chat**, or **Stop**. The toolbox opens beside the button. Selection starts only when you choose Select. Holding the button still opens chat directly.
 
 Screen sharing belongs to a foreground service and survives closing the main activity. It ends when you stop it, Android revokes access, or the app is force-stopped. The notification includes stop controls.
 
-The panel can be moved and resized. Tap its model row to switch between saved, configured provider profiles. System, light, and dark appearance are available in settings. Under **Appearance → Floating button**, adjust opacity from 20% to 100%; changes apply immediately and persist after restarting. The toolbox and chat stay opaque.
+Attach up to six images in one message, including additional screen selections. Tap a thumbnail to preview it, crop the selected attachment, or remove images individually. Successful sends clear the attachment tray and retain the images in recent conversation context. Failed sends keep attachments for retry. Older image data is released after it leaves the six-message model context.
+
+The panel can be moved and resized using its labeled **Resize** grip. Tap its model row to switch between saved, configured provider profiles. System, light, and dark appearance are available in settings. Under **Appearance → Floating button**, adjust opacity from 20% to 100%; changes apply immediately and persist after restarting. The toolbox and chat stay opaque.
 
 ## Providers
 
@@ -50,6 +52,6 @@ Requires JDK 21 and Android SDK platform 36.1. CI runs:
 ./gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest
 ```
 
-GitHub Actions also runs Android 11 and Android 14 emulator tests. They destroy the main activity, verify that opening the toolbox does not start capture, capture twice over a separate test app, send a cropped JPEG to a local mock Ollama API, verify the answer appears in the floating panel, cancel selection with Back, and stop screen sharing explicitly. Protocol tests verify provider request formats and model discovery without paid accounts. Live cloud inference needs your own provider account and model access.
+GitHub Actions also runs Android 11 and Android 14 emulator tests. They destroy the main activity, verify that opening the toolbox does not start capture, capture twice over a separate test app, send a cropped JPEG to a local mock Ollama API, verify the answer appears in the floating panel, import and submit two distinct image files, cancel selection with Back, and stop the overlay from the side toolbox. Protocol tests verify Gemini current-turn parts, all multi-image provider request formats and model discovery without paid accounts. Live cloud inference needs your own provider account and model access.
 
 The **app-debug** Actions artifact contains the installable APK. Provider tests, screenshots, and device logs are uploaded separately.

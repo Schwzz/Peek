@@ -23,7 +23,7 @@ class GeminiVisionService(
 ) : VisionAiService {
 
     override suspend fun analyze(
-        imageBase64: String?,
+        imagesBase64: List<String>,
         prompt: String,
         history: List<ChatMessage>,
         config: ApiConfig,
@@ -42,7 +42,7 @@ class GeminiVisionService(
             val contentsArray = JSONArray()
 
             // Include prior chat history turns if multi-turn
-            val recentHistory = history.filterNot { it.isError || it.isCancelled }.takeLast(6)
+            val recentHistory = history.filterNot { it.isError || it.isCancelled }.takeLast(6).dropWhile { it.sender != MessageSender.USER }
             for (msg in recentHistory) {
                 if (msg.isError) continue
                 val contentObj = JSONObject()
@@ -50,7 +50,7 @@ class GeminiVisionService(
                 val partsArray = JSONArray()
                 val textPart = JSONObject().put("text", msg.text)
                 partsArray.put(textPart)
-                msg.imageBase64?.let { encoded ->
+                msg.imagesBase64.forEach { encoded ->
                     partsArray.put(JSONObject().put("inlineData", JSONObject()
                         .put("mimeType", "image/jpeg").put("data", encoded)))
                 }
@@ -66,8 +66,7 @@ class GeminiVisionService(
             val textPrompt = prompt.ifBlank { "Describe what is shown in this image and highlight any key details." }
             currentParts.put(JSONObject().put("text", textPrompt))
 
-            if (imageBase64 != null) {
-                val base64Image = imageBase64
+            imagesBase64.forEach { base64Image ->
                 val inlineData = JSONObject().apply {
                     put("mimeType", "image/jpeg")
                     put("data", base64Image)
@@ -75,6 +74,7 @@ class GeminiVisionService(
                 currentParts.put(JSONObject().put("inlineData", inlineData))
             }
 
+            currentContent.put("parts", currentParts)
             contentsArray.put(currentContent)
 
             val rootJson = JSONObject().apply {
