@@ -54,6 +54,35 @@ class CaptureFlowInstrumentedTest {
         fail("Control did not become available: $selector")
     }
 
+    /** Wait for the real IME and moving overlay to settle before tapping Send.
+     * A stale accessibility coordinate during resize can hit Gboard's microphone. */
+    private fun enterPromptAndSend(prompt: String) {
+        click(By.clazz("android.widget.EditText"))
+        var stableSince = 0L
+        var previous: android.graphics.Rect? = null
+        awaitState("Composer did not settle above the keyboard") {
+            try {
+            val keyboard = instrumentation.uiAutomation.windows.firstOrNull {
+                it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+            }
+            val input = device.findObject(By.clazz("android.widget.EditText"))
+            val send = device.findObject(By.desc("Send question"))
+            val keyboardBounds = android.graphics.Rect().also { keyboard?.getBoundsInScreen(it) }
+            val bounds = send?.visibleBounds
+            val inputBounds = input?.visibleBounds
+            val ready = keyboard != null && inputBounds != null && !inputBounds.isEmpty && bounds != null && !bounds.isEmpty &&
+                !keyboardBounds.isEmpty && inputBounds.bottom <= keyboardBounds.top && bounds.bottom <= keyboardBounds.top
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (!ready || bounds != previous) { stableSince = now; previous = bounds?.let { android.graphics.Rect(it) } }
+            ready && now - stableSince >= 500
+            } catch (_: StaleObjectException) { stableSince = 0L; previous = null; false }
+        }
+        checkNotNull(device.findObject(By.clazz("android.widget.EditText"))).text = prompt
+        awaitState("Typed prompt did not reach the composer") { OverlayStateManager.draftPrompt.value == prompt }
+        click(By.desc("Send question"))
+        awaitState("Send did not start the request") { OverlayStateManager.chatMessages.value.any { it.sender == MessageSender.USER && it.text == prompt } }
+    }
+
     private fun evidence(name: String) {
         val folder = File(context.filesDir, "capture-evidence").apply { mkdirs() }
         device.dumpWindowHierarchy(File(folder, "$name.xml"))
@@ -161,23 +190,7 @@ class CaptureFlowInstrumentedTest {
                     // Exercise Android cleartext policy, the optional-key local connection,
                     // actual cropped JPEG payload, and the answer in a service-owned window.
                     server.enqueue(MockResponse().setBody("""{"message":{"content":"Local image response received"}}"""))
-                    click(By.clazz("android.widget.EditText"))
-                    device.waitForIdle()
-                    awaitState("The keyboard did not appear") {
-                        instrumentation.uiAutomation.windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
-                    }
-                    val keyboard = checkNotNull(instrumentation.uiAutomation.windows.firstOrNull {
-                        it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
-                    }) { "The keyboard did not appear" }
-                    val keyboardBounds = android.graphics.Rect().also { keyboard.getBoundsInScreen(it) }
-                    val inputBounds = checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)).visibleBounds
-                    val sendBounds = checkNotNull(device.wait(Until.findObject(By.desc("Send question")), 5000)).visibleBounds
-                    assertFalse("Composer has no visible bounds", inputBounds.isEmpty)
-                    assertFalse("Send has no visible bounds", sendBounds.isEmpty)
-                    assertTrue("Keyboard covered the composer: $inputBounds vs $keyboardBounds", inputBounds.bottom <= keyboardBounds.top)
-                    assertTrue("Keyboard covered Send: $sendBounds vs $keyboardBounds", sendBounds.bottom <= keyboardBounds.top)
-                    checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)).text = "Describe this selection"
-                    click(By.desc("Send question"))
+                    enterPromptAndSend("Describe this selection")
                     awaitState("The local model answer never reached chat") {
                         OverlayStateManager.chatMessages.value.any { it.sender == MessageSender.AI && it.text == "Local image response received" }
                     }
@@ -235,9 +248,7 @@ class CaptureFlowInstrumentedTest {
             checkNotNull(device.wait(Until.findObject(By.text("2/6")), 5000))
             evidence("multiple-attachments")
             server.enqueue(MockResponse().setBody("""{"message":{"content":"Both images received"}}"""))
-            click(By.clazz("android.widget.EditText"))
-            checkNotNull(device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)).text = "Compare both images"
-            click(By.desc("Send question"))
+            enterPromptAndSend("Compare both images")
             awaitState("Multi-image answer did not reach chat") { OverlayStateManager.chatMessages.value.any { it.text == "Both images received" } }
             val multiple = JSONObject(checkNotNull(server.takeRequest(5, TimeUnit.SECONDS)).body.readUtf8()).getJSONArray("messages")
             val sent = multiple.getJSONObject(multiple.length() - 1).getJSONArray("images")
