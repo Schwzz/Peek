@@ -10,14 +10,12 @@ import android.content.res.Configuration
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.PixelFormat
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.KeyEvent
 import android.widget.FrameLayout
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -140,26 +138,11 @@ class OverlayService : Service() {
         val owner = lifecycleOwner ?: return
 
         // 1. Setup Floating Bubble
-        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
-        bubbleParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            val metrics = resources.displayMetrics
-            x = (layoutPrefs.getFloat("bubble_x", 0.05f) * metrics.widthPixels).toInt()
-            y = (layoutPrefs.getFloat("bubble_y", 0.35f) * metrics.heightPixels).toInt()
-        }
+        val metrics = resources.displayMetrics
+        bubbleParams = OverlayWindowParams.bubble(
+            (layoutPrefs.getFloat("bubble_x", 0.05f) * metrics.widthPixels).toInt(),
+            (layoutPrefs.getFloat("bubble_y", 0.35f) * metrics.heightPixels).toInt()
+        )
 
         bubbleView = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -207,20 +190,7 @@ class OverlayService : Service() {
             savePanelBounds()
             layoutPrefs.edit().putBoolean("toolkit_layout_v2", true).apply()
         }
-        panelParams = WindowManager.LayoutParams(
-            preferredPanel!!.width,
-            preferredPanel!!.height,
-            layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = preferredPanel!!.x
-            y = preferredPanel!!.y
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-        }
+        panelParams = OverlayWindowParams.panel(preferredPanel!!)
 
         panelView = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -300,14 +270,9 @@ class OverlayService : Service() {
                 } else false
             }
         }
-        toolboxParams = WindowManager.LayoutParams(
-            (88 * displayMetrics.density).toInt(), (240 * displayMetrics.density).toInt(), layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
-        }
+        toolboxParams = OverlayWindowParams.toolbox(
+            PanelBounds(0, 0, (88 * displayMetrics.density).toInt(), (240 * displayMetrics.density).toInt())
+        )
         selectorCompose = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setViewTreeLifecycleOwner(owner)
@@ -352,20 +317,7 @@ class OverlayService : Service() {
             setViewTreeViewModelStoreOwner(owner)
             addView(selectorCompose, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         }
-        selectorParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
-            layoutFlag, WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            // Projection includes system bars. Use the identical display bounds so the
-            // frozen screen and its selection do not shrink or shift under the overlay.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                setFitInsetsTypes(0)
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            }
-        }
+        selectorParams = OverlayWindowParams.selector()
         panelView?.let { view ->
             ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
                 val inset = (insets.getInsets(WindowInsetsCompat.Type.ime()).bottom -
