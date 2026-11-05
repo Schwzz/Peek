@@ -4,7 +4,6 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
@@ -54,14 +53,10 @@ class MediaProjectionService : Service() {
                 .setOngoing(true).addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop screen access", stop).build()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             else startForeground(NOTIFICATION_ID, notification)
-            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            // Match the session to the consent request on 34+: it was asked for the default
-            // display only, and 14+ consent tokens are single-use, so do not cache or reuse
-            // it — when the projection stops, the next capture re-runs the consent flow.
-            val projection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-                projectionManager.getMediaProjection(code, data, MediaProjectionConfig.createConfigForDefaultDisplay())
-            else projectionManager.getMediaProjection(code, data)
+            val projection = (getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager).getMediaProjection(code, data)
                 ?: error("Android did not grant screen access.")
+            // 14+ consent tokens are single-use by design: nothing here caches resultData —
+            // when the projection stops, the next capture re-runs the consent flow instead.
             source = ScreenCaptureHelper(this, projection) { stopSelf() }
             active = this
             OverlayStateManager.setScreenSharing(true)
