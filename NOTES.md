@@ -39,3 +39,17 @@ Deliberately excluded (not in this branch):
 - Instrumented (on-device) tests can't run in this environment (no emulator attached); manager-level invariants are covered by Robolectric unit tests instead.
 - `ScreenCaptureHelper.capture()`'s 200ms settle delay after hiding is empirical (compositor latency), not a frame-count guarantee.
 - `OverlayStateManager`'s `scope` is a global object scope — acceptable for a singleton owned by app lifetime, noted for future teardown work.
+
+## Verification log (this environment)
+- `WindowManager.LayoutParams` construction in the codebase now happens only inside `OverlayWindowParams.kt` (`grep "WindowManager.LayoutParams("` → 6 matches, all inside the builder object + test file).
+- Local Gradle caveats, unrelated to this change: `local.properties` had to be written (`sdk.dir=C:/Users/SUHARTO/AppData/Local/Android/Sdk`); Gradle/AGP fails under the machine's JDK 26/JDK 25 with a `JdkImageTransform` jlink error, so builds here run with `JAVA_HOME` pointed at Eclipse Temurin JDK 21; `google-services.json` is absent so the Google Services plugin runs in its WARN strategy (build still succeeds).
+- `:app:testDebugUnitTest` → BUILD SUCCESSFUL, including the new `OverlayWindowParamsTest` (4 tests: bubble flag/format/type/gravity, panel flag/soft-input invariants, toolbox invariants, selector limits/cutout invariants).
+
+## API-verified correction
+- `MediaProjectionManager` has **no** `getMediaProjection(resultCode, resultData, config)` overload (checked framework docs, API through 37): the `MediaProjectionConfig` path is only `createScreenCaptureIntent(config)`, which `ScreenCaptureActivity` already calls with `createConfigForDefaultDisplay()` on API 34+. An intermediate commit that assumed otherwise was reverted; the consent single-use invariant is enforced structurally (nothing caches `resultData`; stop → service death → fresh consent on next capture).
+
+## Commit map
+- `a71abdd` docs: recon notes & scope (this file)
+- `5c5d054` refactor: `OverlayWindowParams` builder + `OverlayService` migration + `OverlayWindowParamsTest`
+- `07d96aa` + `b438367` projection-consent comment correction (supersedes an incorrect first take)
+- `bfe04d8` feat: follow-up prompt chips ("Explain that in more detail" / "Walk me through it step by step" / "Summarize that in a few bullets") shown after the last non-error AI answer in the floating panel
