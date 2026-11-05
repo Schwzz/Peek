@@ -179,6 +179,20 @@ fun OverlayPanelView(
                             }
                         }
                     }
+                    if (!compact && !loading && !messages.isEmpty() && messages.last().sender == MessageSender.AI && !messages.last().isError) {
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            listOf(
+                                "Explain that in more detail",
+                                "Walk me through it step by step",
+                                "Summarize that in a few bullets"
+                            ).forEach { followUp ->
+                                TextButton(onClick = { if (OverlayStateManager.sendPrompt(followUp, context)) OverlayStateManager.setDraftPrompt("") },
+                                    enabled = !loadingImages, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                                    Text(followUp, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 140.dp))
+                                }
+                            }
+                        }
+                    }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(value = prompt, onValueChange = OverlayStateManager::setDraftPrompt,
                             placeholder = { Text(if (currentImage == null) "Ask a question" else if (images.size == 1) "Ask about this image" else "Ask about these images", style = MaterialTheme.typography.bodyMedium) },
