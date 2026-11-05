@@ -1,9 +1,8 @@
 package com.example.data.api
 
-import android.graphics.Bitmap
 import com.example.model.ChatMessage
 import com.example.model.MessageSender
-import com.example.util.BitmapUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,73 +15,41 @@ import java.util.concurrent.TimeUnit
 
 class OpenAiVisionService(
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .followRedirects(false).followSslRedirects(false)
         .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 ) : VisionAiService {
 
     override suspend fun analyze(
-        bitmap: Bitmap?,
+        imagesBase64: List<String>,
         prompt: String,
         history: List<ChatMessage>,
         config: ApiConfig,
         apiKey: String
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            if (apiKey.isBlank()) {
+            if (apiKey.isBlank() && config.provider.requiresApiKey) {
                 return@withContext Result.failure(
                     IllegalArgumentException("API key is missing. Please configure it in Settings.")
                 )
             }
 
-            var baseUrl = config.baseUrl.trim()
-            if (!baseUrl.endsWith("/")) {
-                baseUrl += "/"
-            }
-            val endpoint = if (baseUrl.endsWith("chat/completions/")) {
-                baseUrl.removeSuffix("/")
-            } else if (baseUrl.endsWith("chat/completions")) {
-                baseUrl
-            } else {
-                "${baseUrl}chat/completions"
-            }
-
-            val model = config.modelName.ifBlank { VisionAiProvider.OPENAI_COMPATIBLE.defaultModel }
+            val model = config.modelName.trim()
+            require(model.isNotBlank()) { "Choose a model in Models first." }
             val messagesArray = JSONArray()
 
-            // Include prior chat history
-            val recentHistory = history.takeLast(6)
-            for (msg in recentHistory) {
-                if (msg.isError) continue
-                val msgObj = JSONObject()
-                msgObj.put("role", if (msg.sender == MessageSender.USER) "user" else "assistant")
-                msgObj.put("content", msg.text)
-                messagesArray.put(msgObj)
+            fun append(role: String, text: String, images: List<String>) {
+                val content = JSONArray().put(JSONObject().put("type", "text").put("text", text))
+                images.forEach { image -> content.put(JSONObject().put("type", "image_url")
+                    .put("image_url", JSONObject().put("url", "data:image/jpeg;base64,$image"))) }
+                messagesArray.put(JSONObject().put("role", role).put("content", if (images.isEmpty()) text else content))
             }
-
-            // Current message
-            val currentMsg = JSONObject()
-            currentMsg.put("role", "user")
-
-            val contentArray = JSONArray()
-            val textPrompt = prompt.ifBlank { "Describe what is shown in this image and highlight any key details." }
-            contentArray.put(JSONObject().apply {
-                put("type", "text")
-                put("text", textPrompt)
-            })
-
-            if (bitmap != null) {
-                val base64 = BitmapUtils.toBase64Jpeg(bitmap)
-                contentArray.put(JSONObject().apply {
-                    put("type", "image_url")
-                    put("image_url", JSONObject().apply {
-                        put("url", "data:image/jpeg;base64,$base64")
-                    })
-                })
+            history.filterNot { it.isError || it.isCancelled }.takeLast(6).dropWhile { it.sender != MessageSender.USER }.forEach {
+                append(if (it.sender == MessageSender.USER) "user" else "assistant", it.text, it.imagesBase64)
             }
-            currentMsg.put("content", contentArray)
-            messagesArray.put(currentMsg)
+            append("user", prompt.ifBlank { "Describe these images." }, imagesBase64)
 
             val rootJson = JSONObject().apply {
                 put("model", model)
@@ -92,20 +59,17 @@ class OpenAiVisionService(
             val requestBody = rootJson.toString()
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
 
-            val request = Request.Builder()
-                .url(endpoint)
-                .addHeader("Authorization", "Bearer $apiKey")
+            val request = ProviderEndpoints.request(config, apiKey, "chat/completions")
                 .post(requestBody)
                 .build()
 
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string().orEmpty()
+            val (responseCode, responseBody) = client.newCall(request).readResponse()
 
-            if (!response.isSuccessful) {
+            if (responseCode !in 200..299) {
                 val parsedError = runCatching {
                     val errObj = JSONObject(responseBody).optJSONObject("error")
-                    errObj?.optString("message") ?: "HTTP ${response.code}: ${response.message}"
-                }.getOrDefault("HTTP ${response.code}: $responseBody")
+                    errObj?.optString("message") ?: "HTTP $responseCode"
+                }.getOrDefault("HTTP $responseCode")
                 return@withContext Result.failure(Exception("API Error: $parsedError"))
             }
 
@@ -117,13 +81,20 @@ class OpenAiVisionService(
 
             val firstChoice = choices.getJSONObject(0)
             val message = firstChoice.optJSONObject("message")
-            val content = message?.optString("content", "")?.trim().orEmpty()
+            val value = message?.opt("content")
+            val content = when (value) {
+                is String -> value.trim()
+                is JSONArray -> (0 until value.length()).mapNotNull { value.optJSONObject(it)?.opt("text") as? String }.joinToString("\n").trim()
+                else -> ""
+            }
 
             if (content.isEmpty()) {
-                Result.failure(Exception("API returned an empty message."))
+                Result.failure(Exception((message?.opt("refusal") as? String)?.takeIf { it.isNotBlank() } ?: "The model returned no answer. Try another model or a shorter prompt."))
             } else {
                 Result.success(content)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }

@@ -14,6 +14,15 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ExampleInstrumentedTest {
   @Test
+  fun apiKeyEncryptionNeverStoresPlaintext() {
+    val secret = "device-test-key"
+    val encrypted = com.example.util.KeystoreCrypto.encrypt(secret)
+    assertTrue(encrypted.startsWith("enc:v1:"))
+    assertNotEquals(secret, encrypted)
+    assertEquals(secret, com.example.util.KeystoreCrypto.decrypt(encrypted))
+  }
+
+  @Test
   fun useAppContext() {
     // Context of the app under test.
     val appContext = InstrumentationRegistry.getInstrumentation().targetContext

@@ -41,25 +41,12 @@ class MainActivity : ComponentActivity() {
 
                 // Image picker launcher for intent-triggered pick
                 val photoPickerLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.PickVisualMedia()
-                ) { uri: Uri? ->
-                    if (uri != null) {
-                        runCatching {
-                            val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                                val source = ImageDecoder.createSource(contentResolver, uri)
-                                ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
-                                    decoder.isMutableRequired = true
-                                }
-                            } else {
-                                @Suppress("DEPRECATION")
-                                MediaStore.Images.Media.getBitmap(contentResolver, uri)
-                            }
-                            OverlayStateManager.setCurrentImage(bitmap)
-                            OverlayStateManager.setPanelExpanded(true)
-                            Toast.makeText(this, "Image loaded into Peek", Toast.LENGTH_SHORT).show()
-                        }.onFailure {
-                            OverlayStateManager.setErrorMessage("Failed to load image: ${it.message}")
-                        }
+                    contract = ActivityResultContracts.PickMultipleVisualMedia(OverlayStateManager.MAX_IMAGES)
+                ) { uris ->
+                    if (uris.isNotEmpty()) {
+                        com.example.util.PickedImageImporter.load(applicationContext, uris)
+                    } else if (OverlayStateManager.isServiceRunning.value) {
+                        OverlayStateManager.setPanelExpanded(true)
                     }
                 }
 
