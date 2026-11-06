@@ -56,7 +56,10 @@ fun OverlayPanelView(
     onResize: (Float, Float) -> Unit = { _, _ -> },
     onGeometryChanged: () -> Unit = {},
     onInputRequested: () -> Unit = {},
-    inputFocusRelease: Int = 0
+    inputFocusRelease: Int = 0,
+    isVoiceListening: Boolean = false,
+    onVoiceRequested: () -> Unit = {},
+    onVoiceCancelRequested: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -216,6 +219,16 @@ fun OverlayPanelView(
                                 }, maxLines = 3,
                             shape = RoundedCornerShape(8.dp), textStyle = MaterialTheme.typography.bodyMedium,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }))
+                        IconButton(
+                            onClick = if (isVoiceListening) onVoiceCancelRequested else onVoiceRequested,
+                            modifier = Modifier.testTag("overlay_voice_button")
+                        ) {
+                            Icon(
+                                if (isVoiceListening) Icons.Default.Stop else Icons.Default.Mic,
+                                if (isVoiceListening) "Stop voice input" else "Voice input",
+                                Modifier.size(20.dp)
+                            )
+                        }
                         IconButton(onClick = ::send, enabled = loading || (!loadingImages && (prompt.isNotBlank() || images.isNotEmpty())), modifier = Modifier.testTag("overlay_send_button")) {
                             Icon(if (loading) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send, if (loading) "Stop generating" else "Send question", Modifier.size(20.dp))
                         }
