@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Window blur/focus fixture</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  }
+  body {
+    margin: 0 auto;
+    max-width: 960px;
+    padding: 24px;
+    line-height: 1.45;
+  }
+  h1 { font-size: 1.35rem; margin: 0 0 8px; }
+  p, li { max-width: 72ch; }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    margin: 16px 0;
+  }
+  .counters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+    margin: 16px 0;
+  }
+  .counter {
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .counter strong { display: block; font-size: 1.4rem; }
+  .counter span { font-size: .82rem; opacity: .72; }
+  button {
+    font: inherit;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+    background: transparent;
+    cursor: pointer;
+  }
+  button:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+  iframe {
+    width: 100%;
+    min-height: 120px;
+    border: 1px dashed color-mix(in srgb, currentColor 35%, transparent);
+    border-radius: 8px;
+    margin: 12px 0 20px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  caption { text-align: left; padding: 8px 0; font-weight: 600; }
+  th, td {
+    border-bottom: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    padding: 7px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; opacity: .72; }
+  code { font-size: .85em; }
+  .hint { opacity: .72; font-size: .9rem; }
+</style>
+</head>
+<body>
+  <h1>Window blur / focus fixture</h1>
+  <p>
+    Switch away from this tab and back. The first blur or focus is recorded
+    immediately (leading edge); repeats inside 5 seconds are suppressed. Focus that
+    moves into the embedded iframe is skipped. Accepted rows are written to
+    <code>localStorage</code> every 15 seconds.
+  </p>
+
+  <div class="counters" aria-live="polite">
+    <div class="counter"><strong id="accepted-count">0</strong><span>accepted events</span></div>
+    <div class="counter"><strong id="suppressed-count">0</strong><span>throttled this session</span></div>
+    <div class="counter"><strong id="skipped-count">0</strong><span>iframe focus skipped</span></div>
+    <div class="counter"><strong id="flush-count">0</strong><span>localStorage flushes</span></div>
+  </div>
+
+  <div class="toolbar">
+    <button id="clear-button" type="button">Clear stored events</button>
+    <button id="flush-button" type="button">Flush now</button>
+    <span class="hint" id="status">Waiting for a window blur or focus event.</span>
+  </div>
+
+  <p class="hint">
+    Click inside the iframe below to exercise the <code>activeElement === "IFRAME"</code>
+    skip, then click back into this page.
+  </p>
+  <iframe id="probe-frame" title="Iframe focus probe"
+          srcdoc="<!DOCTYPE html><html><body style='font-family:system-ui;padding:16px'><label>Focus inside this iframe <input autofocus placeholder='iframe input'></label></body></html>"></iframe>
+
+  <table>
+    <caption>Recorded window events (newest first)</caption>
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">Time</th>
+        <th scope="col">Event</th>
+        <th scope="col">document.activeElement</th>
+      </tr>
+    </thead>
+    <tbody id="event-rows"></tbody>
+  </table>
+
+<script>
+/*
+ * Behavior modeled on the Canvas LMS blur/focus event stream:
+ *   - canvas-lms/ui/shared/page_blurred.js
+ *   - canvas-lms/ui/shared/page_focused.js
+ *   - canvas-lms/ui/shared/event_manager.js
+ *
+ * The fixture keeps the same three invariants those files care about:
+ *   1. window blur/focus listeners;
+ *   2. a 5000 ms leading-edge throttle (first event wins, then quiet);
+ *   3. skip when document.activeElement is the IFRAME, because moving focus into
+ *      an embedded frame is not the page being backgrounded.
+ * Accepted rows are flushed to localStorage every 15000 ms.
+ */
+(() => {
+  'use strict';
+
+  const STORAGE_KEY = 'peek.blurFocusEvents.v1';
+  const THROTTLE_MS = 5000;
+  const FLUSH_MS = 15000;
+  const MAX_ROWS = 500;
+
+  const acceptedCount = document.getElementById('accepted-count');
+  const suppressedCount = document.getElementById('suppressed-count');
+  const skippedCount = document.getElementById('skipped-count');
+  const flushCount = document.getElementById('flush-count');
+  const status = document.getElementById('status');
+  const rows = document.getElementById('event-rows');
+
+  let events = loadEvents();
+  let lastRecordedAt = 0;
+  let suppressed = 0;
+  let skipped = 0;
+  let flushes = 0;
+
+  function loadEvents() {
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+      return Array.isArray(stored) ? stored.slice(-MAX_ROWS) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function persist() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(events.slice(-MAX_ROWS)));
+    } catch (error) {
+      status.textContent = 'Could not write localStorage: ' + error.message;
+    }
+    flushes += 1;
+    flushCount.textContent = String(flushes);
+    status.textContent = 'Flushed ' + events.length + ' event(s) to localStorage at ' +
+      new Date().toLocaleTimeString() + '.';
+  }
+
+  function describeActiveElement() {
+    const element = document.activeElement;
+    if (!element) return '(none)';
+    const tag = element.tagName || element.nodeName || 'UNKNOWN';
+    if (tag === 'IFRAME') return 'IFRAME';
+    const id = element.id ? '#' + element.id : '';
+    return tag.toLowerCase() + id;
+  }
+
+  function focusIsInsideIframe() {
+    const element = document.activeElement;
+    return !!element && element.tagName === 'IFRAME';
+  }
+
+  function updateCounters() {
+    acceptedCount.textContent = String(events.length);
+    suppressedCount.textContent = String(suppressed);
+    skippedCount.textContent = String(skipped);
+    flushCount.textContent = String(flushes);
+  }
+
+  function renderRows() {
+    if (!events.length) {
+      rows.innerHTML = '<tr><td colspan="4">No events recorded yet.</td></tr>';
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    events.slice().reverse().forEach((event) => {
+      const row = document.createElement('tr');
+      const cells = [
+        String(event.sequence),
+        event.at,
+        event.type,
+        event.activeElement
+      ];
+      cells.forEach((value) => {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        row.appendChild(cell);
+      });
+      fragment.appendChild(row);
+    });
+    rows.replaceChildren(fragment);
+  }
+
+  function record(type) {
+    const now = performance.now();
+    if (now - lastRecordedAt < THROTTLE_MS) {
+      suppressed += 1;
+      updateCounters();
+      status.textContent = 'Suppressed a ' + type + ' event inside the 5000 ms window.';
+      return;
+    }
+    lastRecordedAt = now;
+    events.push({
+      sequence: events.length + 1,
+      at: new Date().toISOString(),
+      type,
+      activeElement: describeActiveElement()
+    });
+    if (events.length > MAX_ROWS) events = events.slice(-MAX_ROWS);
+    updateCounters();
+    renderRows();
+    status.textContent = 'Recorded window ' + type + ' (leading edge).';
+  }
+
+  function handleWindowEvent(type) {
+    if (focusIsInsideIframe()) {
+      skipped += 1;
+      updateCounters();
+      status.textContent = 'Skipped ' + type + ': activeElement is the IFRAME.';
+      return;
+    }
+    record(type);
+  }
+
+  window.addEventListener('blur', () => handleWindowEvent('blur'));
+  window.addEventListener('focus', () => handleWindowEvent('focus'));
+  window.addEventListener('pagehide', persist);
+  window.addEventListener('beforeunload', persist);
+
+  document.getElementById('flush-button').addEventListener('click', persist);
+  document.getElementById('clear-button').addEventListener('click', () => {
+    events = [];
+    lastRecordedAt = 0;
+    suppressed = 0;
+    skipped = 0;
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (_) { /* ignore storage failures */ }
+    updateCounters();
+    renderRows();
+    status.textContent = 'Cleared stored events.';
+  });
+
+  updateCounters();
+  renderRows();
+  setInterval(persist, FLUSH_MS);
+})();
+</script>
+</body>
+</html>
