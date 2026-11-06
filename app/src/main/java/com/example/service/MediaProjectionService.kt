@@ -57,7 +57,7 @@ class MediaProjectionService : Service() {
                 ?: error("Android did not grant screen access.")
             // 14+ consent tokens are single-use by design: nothing here caches resultData —
             // when the projection stops, the next capture re-runs the consent flow instead.
-            source = ScreenCaptureHelper(this, projection) { stopSelf() }
+            source = ScreenCaptureHelper(this, projection) { handleProjectionStopped() }
             active = this
             OverlayStateManager.setScreenSharing(true)
             OverlayStateManager.setStartingScreenSharing(false)
@@ -93,6 +93,11 @@ class MediaProjectionService : Service() {
             }
             // Screen sharing remains active after success, cancellation, or a failed screenshot.
         }
+    }
+
+    /** The projection died (user stop, revocation, or display loss); tear the session down. */
+    internal fun handleProjectionStopped() {
+        stopSelf()
     }
 
     override fun onDestroy() {

@@ -39,12 +39,18 @@ Deliberately excluded (not in this branch):
 - Instrumented (on-device) tests can't run in this environment (no emulator attached); manager-level invariants are covered by Robolectric unit tests instead.
 - The panel focus behavior is Robolectric-pinned (idle and focused `WindowManager.LayoutParams` presets) but not yet device-verified; the real tap-to-focus and keyboard-close transitions still need an on-device check.
 - `ScreenCaptureHelper.capture()`'s 200ms settle delay after hiding is empirical (compositor latency), not a frame-count guarantee.
-- `OverlayStateManager`'s `scope` is a global object scope — acceptable for a singleton owned by app lifetime, noted for future teardown work.
+- `OverlayStateManager`'s `scope` is a global object scope - acceptable for a singleton owned by app lifetime, noted for future teardown work.
+- Split-screen behavior has no explicit multi-window bounds handling: `OverlayService.onConfigurationChanged` recomputes from saved fractional positions and clamps to `resources.displayMetrics`. The left/right half invariant is device-unverified.
+- Display disconnect has no explicit `DisplayManager` listener; session teardown relies on `MediaProjection.Callback.onStop` calling `MediaProjectionService.handleProjectionStopped()`. External-display removal is device-unverified.
+- Denied `POST_NOTIFICATIONS` is silent: `MainActivity` asks once with a no-op result callback. The foreground service still runs, but its notification may not appear in the shade; no UI explains that.
+- Voice follow-up is implemented but not device-verified: runtime microphone permission, recognizer results, and the no-keyboard follow-up path need an on-device check.
 
 ## Verification log (this environment)
 - `WindowManager.LayoutParams` construction in the codebase now happens only inside `OverlayWindowParams.kt` (`grep "WindowManager.LayoutParams("` → 6 matches, all inside the builder object + test file).
 - Local Gradle caveats, unrelated to this change: `local.properties` had to be written (`sdk.dir=C:/Users/SUHARTO/AppData/Local/Android/Sdk`); Gradle/AGP fails under the machine's JDK 26/JDK 25 with a `JdkImageTransform` jlink error, so builds here run with `JAVA_HOME` pointed at Eclipse Temurin JDK 21; `google-services.json` is absent so the Google Services plugin runs in its WARN strategy (build still succeeds).
-- `:app:testDebugUnitTest` → BUILD SUCCESSFUL, including the new `OverlayWindowParamsTest` (4 tests: bubble flag/format/type/gravity, panel flag/soft-input invariants, toolbox invariants, selector limits/cutout invariants).
+- `:app:testDebugUnitTest` → BUILD SUCCESSFUL, including `OverlayWindowParamsTest` (5 tests: bubble, idle panel, focused panel, toolbox, selector invariants), `OverlayServiceCaptureTest` (capture params identity/flags, focus gating, voice recognizer teardown), `MediaProjectionServiceTest` (projection stop stops the service and clears sharing state), and `OverlayServicePermissionTest` (denied overlay permission stops the service).
+- `test/DEVICE-CHECKLIST.md` is an authoring artifact only: every row is still `unverified` until run on a physical device.
+- `test/blur-fixture.html` is a standalone browser fixture; it has not been executed in a browser here.
 
 ## API-verified correction
 - `MediaProjectionManager` has **no** `getMediaProjection(resultCode, resultData, config)` overload (checked framework docs, API through 37): the `MediaProjectionConfig` path is only `createScreenCaptureIntent(config)`, which `ScreenCaptureActivity` already calls with `createConfigForDefaultDisplay()` on API 34+. An intermediate commit that assumed otherwise was reverted; the consent single-use invariant is enforced structurally (nothing caches `resultData`; stop → service death → fresh consent on next capture).
