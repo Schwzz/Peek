@@ -37,6 +37,7 @@ Deliberately excluded (not in this branch):
 
 ## Known quirks / limitations
 - Instrumented (on-device) tests can't run in this environment (no emulator attached); manager-level invariants are covered by Robolectric unit tests instead.
+- The panel focus behavior is Robolectric-pinned (idle and focused `WindowManager.LayoutParams` presets) but not yet device-verified; the real tap-to-focus and keyboard-close transitions still need an on-device check.
 - `ScreenCaptureHelper.capture()`'s 200ms settle delay after hiding is empirical (compositor latency), not a frame-count guarantee.
 - `OverlayStateManager`'s `scope` is a global object scope — acceptable for a singleton owned by app lifetime, noted for future teardown work.
 
