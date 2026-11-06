@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
@@ -78,6 +80,7 @@ class OverlayService : Service() {
 
     private var panelView: ComposeView? = null
     private var panelParams: WindowManager.LayoutParams? = null
+    private var panelFocusRelease by mutableIntStateOf(0)
 
     private var selectorWindow: FrameLayout? = null
     private var selectorCompose: ComposeView? = null
@@ -198,9 +201,11 @@ class OverlayService : Service() {
             setViewTreeSavedStateRegistryOwner(owner)
             setViewTreeViewModelStoreOwner(owner)
 
-            // When user taps outside the visible overlay card, minimize the panel without blocking touch to the app
+            // When user taps outside the visible overlay card, release input focus and
+            // minimize the panel without blocking touch to the app.
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                    setPanelFocus(false)
                     OverlayStateManager.setPanelExpanded(false)
                     true
                 } else {
@@ -219,10 +224,13 @@ class OverlayService : Service() {
                         onCaptureScreenRequested = { requestScreenCapture() },
                         onPickImageRequested = { openImagePicker() },
                         onMinimizeRequested = {
+                            setPanelFocus(false)
                             OverlayStateManager.setPanelExpanded(false)
                         },
                         onCloseRequested = { stopSelf() },
-                        onOpenSettingsRequested = { openSettings() }
+                        onOpenSettingsRequested = { openSettings() },
+                        onInputRequested = { setPanelFocus(true) },
+                        inputFocusRelease = panelFocusRelease
                     )
                 }
             }
@@ -323,7 +331,9 @@ class OverlayService : Service() {
                 val inset = (insets.getInsets(WindowInsetsCompat.Type.ime()).bottom -
                     insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom).coerceAtLeast(0)
                 if (keyboardInset != inset) {
+                    val keyboardWasOpen = keyboardInset > 0
                     keyboardInset = inset
+                    if (keyboardWasOpen && inset == 0) setPanelFocus(false)
                     view.post { updatePanelBounds() }
                 }
                 insets
@@ -369,6 +379,44 @@ class OverlayService : Service() {
         val fit = OverlayGeometry.clampPanel(preferred, metrics.widthPixels, (metrics.heightPixels - keyboardInset).coerceAtLeast(1), metrics.density)
         params.width = fit.width; params.height = fit.height; params.x = fit.x; params.y = fit.y
         panelView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.updateViewLayout(it, params) } }
+    }
+
+    /**
+     * Single toggle for the panel's input focus. The window is added non-focusable;
+     * only the prompt field may turn focus on, and closing the keyboard, tapping
+     * outside, or hiding the panel turns it back off.
+     */
+    private fun setPanelFocus(focused: Boolean) {
+        val view = panelView ?: return
+        val params = panelParams ?: return
+        val isFocusable = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE == 0
+        if (focused && isFocusable) return
+
+        val bounds = PanelBounds(params.x, params.y, params.width, params.height)
+        val preset = if (focused) {
+            OverlayWindowParams.focusedPanel(bounds)
+        } else {
+            OverlayWindowParams.panel(bounds)
+        }
+        params.flags = preset.flags
+        params.softInputMode = preset.softInputMode
+
+        if (focused) {
+            if (view.isAttachedToWindow) {
+                runCatching { windowManager.updateViewLayout(view, params) }
+            }
+            view.post {
+                view.requestFocus()
+                ViewCompat.getWindowInsetsController(view)?.show(WindowInsetsCompat.Type.ime())
+            }
+        } else {
+            panelFocusRelease++
+            ViewCompat.getWindowInsetsController(view)?.hide(WindowInsetsCompat.Type.ime())
+            view.clearFocus()
+            if (isFocusable && view.isAttachedToWindow) {
+                runCatching { windowManager.updateViewLayout(view, params) }
+            }
+        }
     }
 
     private fun savePanelBounds() {
@@ -451,6 +499,7 @@ class OverlayService : Service() {
             // retained composition cancels its window recomposer and can leave stale UI.
             fun hide(view: View?) { view?.visibility = View.GONE }
             if (capturing) {
+                setPanelFocus(false)
                 hide(bubbleView); hide(panelView); hide(toolboxWindow)
                 if (bitmap != null) {
                     selectorWindow?.visibility = View.VISIBLE
@@ -473,6 +522,7 @@ class OverlayService : Service() {
                     }
                 }
             } else hide(toolboxWindow)
+            if (!expanded) setPanelFocus(false)
             val view = if (expanded) panelView else bubbleView
             hide(if (expanded) bubbleView else panelView)
             if (expanded) updatePanelBounds()

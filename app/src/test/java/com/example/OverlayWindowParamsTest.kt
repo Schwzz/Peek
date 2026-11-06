@@ -41,8 +41,37 @@ class OverlayWindowParamsTest {
     }
 
     @Test
-    fun panelIsTouchModalOpenWatchesOutsideTouchesAndCanTakeInput() {
+    fun panelIsNonFocusableSoAddingItOpensNoKeyboardAndStealsNoFocus() {
         val params = OverlayWindowParams.panel(PanelBounds(10, 20, 300, 400))
+        assertEquals(overlayType, params.type)
+        assertEquals(format, params.format)
+        assertEquals(gravity, params.gravity)
+        assertEquals(10, params.x)
+        assertEquals(20, params.y)
+        assertEquals(300, params.width)
+        assertEquals(400, params.height)
+        assertNotEquals(
+            0,
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        )
+        assertNotEquals(
+            0,
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        )
+        assertNotEquals(
+            0,
+            params.flags and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+        )
+        assertEquals(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN,
+            params.softInputMode
+        )
+    }
+
+    @Test
+    fun focusedPanelTakesInputAndAsksForTheKeyboard() {
+        val params = OverlayWindowParams.focusedPanel(PanelBounds(10, 20, 300, 400))
         assertEquals(overlayType, params.type)
         assertEquals(format, params.format)
         assertEquals(gravity, params.gravity)
@@ -63,7 +92,8 @@ class OverlayWindowParamsTest {
             params.flags and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
         )
         assertEquals(
-            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE,
             params.softInputMode
         )
     }

@@ -40,17 +40,34 @@ object OverlayWindowParams {
         }
 
     /**
-     * Interactive chat panel. NOT touch-modal, so taps adjacent to it reach the app
-     * underneath, and it watches for ACTION_OUTSIDE to dismiss itself. Stays touchable
-     * and (implicitly) focusable because it hosts a text field; changes that reject
-     * keyboard input on purpose would be behavior changes, not hygiene.
+     * Interactive chat panel before its text field is tapped. It must be added
+     * non-focusable: a focusable overlay steals input focus from the app underneath
+     * and asks the system for a keyboard the moment it appears. Touch still reaches
+     * the panel, and ACTION_OUTSIDE still dismisses it.
      */
     fun panel(bounds: PanelBounds): WindowManager.LayoutParams =
-        WindowManager.LayoutParams(
+        panel(bounds, focusable = false)
+
+    /**
+     * Same chat panel once the user taps its text field. Only then may it take input
+     * focus and ask for the keyboard.
+     */
+    fun focusedPanel(bounds: PanelBounds): WindowManager.LayoutParams =
+        panel(bounds, focusable = true)
+
+    private fun panel(bounds: PanelBounds, focusable: Boolean): WindowManager.LayoutParams {
+        val focusFlags = if (focusable) 0 else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        val inputState = if (focusable) {
+            WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+        } else {
+            WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
+        }
+        return WindowManager.LayoutParams(
             bounds.width,
             bounds.height,
             overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            focusFlags or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
                     WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
@@ -58,8 +75,9 @@ object OverlayWindowParams {
             gravity = Gravity.TOP or Gravity.START
             x = bounds.x
             y = bounds.y
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or inputState
         }
+    }
 
     /** Small quadrants menu anchored next to the bubble; keyboard never requested. */
     fun toolbox(bounds: PanelBounds): WindowManager.LayoutParams =
