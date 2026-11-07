@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,15 +10,22 @@ import android.app.Service
 import android.content.res.Configuration
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.graphics.PixelFormat
 import android.graphics.Bitmap
+import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.view.Display
 import android.view.KeyEvent
 import android.widget.FrameLayout
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -29,9 +37,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.app.NotificationCompat
@@ -49,6 +61,7 @@ import com.example.R
 import com.example.ui.components.FloatingBubbleView
 import com.example.ui.components.OverlayPanelView
 import com.example.ui.screens.ScreenCaptureActivity
+import com.example.ui.screens.VoicePermissionActivity
 import com.example.ui.screens.ScreenSelectorActivity
 import com.example.ui.theme.PeekTheme
 import kotlinx.coroutines.CoroutineScope
@@ -80,6 +93,14 @@ class OverlayService : Service() {
 
     private var panelView: ComposeView? = null
     private var panelParams: WindowManager.LayoutParams? = null
+    private var panelFocusRelease by mutableIntStateOf(0)
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var voiceListening by mutableStateOf(false)
+    private var displayManager: DisplayManager? = null
+    private val displayListener = OverlayDisplayListener(
+        panelDisplayId = { panelView?.display?.displayId ?: Display.DEFAULT_DISPLAY },
+        onPanelDisplayRemoved = { relocatePanelToDefaultDisplay() }
+    )
 
     private var selectorWindow: FrameLayout? = null
     private var selectorCompose: ComposeView? = null
@@ -98,6 +119,8 @@ class OverlayService : Service() {
         super.onCreate()
         active = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        displayManager = getSystemService(DisplayManager::class.java)
+        displayManager?.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         createNotificationChannel()
 
         val notification = createNotification()
@@ -128,6 +151,7 @@ class OverlayService : Service() {
             val delayMs = intent.getLongExtra("capture_delay", 0L)
             scope.launch { delay(delayMs); requestScreenCapture() }
         }
+        if (intent?.action == ACTION_VOICE) startVoiceInput()
         if (intent?.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY
@@ -140,26 +164,11 @@ class OverlayService : Service() {
         val owner = lifecycleOwner ?: return
 
         // 1. Setup Floating Bubble
-        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
-        bubbleParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            val metrics = resources.displayMetrics
-            x = (layoutPrefs.getFloat("bubble_x", 0.05f) * metrics.widthPixels).toInt()
-            y = (layoutPrefs.getFloat("bubble_y", 0.35f) * metrics.heightPixels).toInt()
-        }
+        val bubbleBounds = OverlayWindowMetrics.bounds(this)
+        bubbleParams = OverlayWindowParams.bubble(
+            (layoutPrefs.getFloat("bubble_x", 0.05f) * bubbleBounds.width()).toInt(),
+            (layoutPrefs.getFloat("bubble_y", 0.35f) * bubbleBounds.height()).toInt()
+        )
 
         bubbleView = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -192,35 +201,23 @@ class OverlayService : Service() {
 
         // 2. Setup Overlay Panel - bound strictly to the panel's dimensions so taps outside reach underlying app
         val displayMetrics = resources.displayMetrics
+        val panelScreen = OverlayWindowMetrics.bounds(this)
         val migrateToolkit = !layoutPrefs.getBoolean("toolkit_layout_v2", false)
         val widthDp = layoutPrefs.getFloat("panel_width_dp", 320f).let { if (migrateToolkit) it.coerceAtMost(320f) else it }
         val heightDp = layoutPrefs.getFloat("panel_height_dp", 440f).let { if (migrateToolkit) it.coerceAtMost(440f) else it }
         val panelWidth = (widthDp * displayMetrics.density).toInt()
         val panelHeight = (heightDp * displayMetrics.density).toInt()
         preferredPanel = OverlayGeometry.clampPanel(PanelBounds(
-            (layoutPrefs.getFloat("panel_x", ((displayMetrics.widthPixels - panelWidth) / displayMetrics.widthPixels.toFloat()).coerceAtLeast(0f)) * displayMetrics.widthPixels).toInt(),
-            (layoutPrefs.getFloat("panel_y", 0.10f) * displayMetrics.heightPixels).toInt(),
+            (layoutPrefs.getFloat("panel_x", ((panelScreen.width() - panelWidth) / panelScreen.width().toFloat()).coerceAtLeast(0f)) * panelScreen.width()).toInt(),
+            (layoutPrefs.getFloat("panel_y", 0.10f) * panelScreen.height()).toInt(),
             panelWidth, panelHeight
-        ), displayMetrics.widthPixels, displayMetrics.heightPixels, displayMetrics.density)
+        ), panelScreen.width(), panelScreen.height(), displayMetrics.density)
 
         if (migrateToolkit) {
             savePanelBounds()
             layoutPrefs.edit().putBoolean("toolkit_layout_v2", true).apply()
         }
-        panelParams = WindowManager.LayoutParams(
-            preferredPanel!!.width,
-            preferredPanel!!.height,
-            layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = preferredPanel!!.x
-            y = preferredPanel!!.y
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-        }
+        panelParams = OverlayWindowParams.panel(preferredPanel!!)
 
         panelView = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -228,9 +225,11 @@ class OverlayService : Service() {
             setViewTreeSavedStateRegistryOwner(owner)
             setViewTreeViewModelStoreOwner(owner)
 
-            // When user taps outside the visible overlay card, minimize the panel without blocking touch to the app
+            // When user taps outside the visible overlay card, release input focus and
+            // minimize the panel without blocking touch to the app.
             setOnTouchListener { _, event ->
                 if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                    setPanelFocus(false)
                     OverlayStateManager.setPanelExpanded(false)
                     true
                 } else {
@@ -249,10 +248,16 @@ class OverlayService : Service() {
                         onCaptureScreenRequested = { requestScreenCapture() },
                         onPickImageRequested = { openImagePicker() },
                         onMinimizeRequested = {
+                            setPanelFocus(false)
                             OverlayStateManager.setPanelExpanded(false)
                         },
                         onCloseRequested = { stopSelf() },
-                        onOpenSettingsRequested = { openSettings() }
+                        onOpenSettingsRequested = { openSettings() },
+                        onInputRequested = { setPanelFocus(true) },
+                        inputFocusRelease = panelFocusRelease,
+                        isVoiceListening = voiceListening,
+                        onVoiceRequested = { startVoiceInput() },
+                        onVoiceCancelRequested = { stopVoiceInput() }
                     )
                 }
             }
@@ -300,14 +305,9 @@ class OverlayService : Service() {
                 } else false
             }
         }
-        toolboxParams = WindowManager.LayoutParams(
-            (88 * displayMetrics.density).toInt(), (240 * displayMetrics.density).toInt(), layoutFlag,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
-        }
+        toolboxParams = OverlayWindowParams.toolbox(
+            PanelBounds(0, 0, (88 * displayMetrics.density).toInt(), (240 * displayMetrics.density).toInt())
+        )
         selectorCompose = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setViewTreeLifecycleOwner(owner)
@@ -352,26 +352,15 @@ class OverlayService : Service() {
             setViewTreeViewModelStoreOwner(owner)
             addView(selectorCompose, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         }
-        selectorParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
-            layoutFlag, WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            // Projection includes system bars. Use the identical display bounds so the
-            // frozen screen and its selection do not shrink or shift under the overlay.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                setFitInsetsTypes(0)
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            }
-        }
+        selectorParams = OverlayWindowParams.selector()
         panelView?.let { view ->
             ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
                 val inset = (insets.getInsets(WindowInsetsCompat.Type.ime()).bottom -
                     insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom).coerceAtLeast(0)
                 if (keyboardInset != inset) {
+                    val keyboardWasOpen = keyboardInset > 0
                     keyboardInset = inset
+                    if (keyboardWasOpen && inset == 0) setPanelFocus(false)
                     view.post { updatePanelBounds() }
                 }
                 insets
@@ -382,9 +371,10 @@ class OverlayService : Service() {
 
     private fun moveBubble(dx: Float, dy: Float) {
         val params = bubbleParams ?: return
-        val metrics = resources.displayMetrics
-        val size = (60 * metrics.density).toInt()
-        val (x, y) = OverlayGeometry.clampBubble(params.x + dx.toInt(), params.y + dy.toInt(), size, metrics.widthPixels, metrics.heightPixels)
+        val density = resources.displayMetrics.density
+        val bounds = OverlayWindowMetrics.bounds(this)
+        val size = (60 * density).toInt()
+        val (x, y) = OverlayGeometry.clampBubble(params.x + dx.toInt(), params.y + dy.toInt(), size, bounds.width(), bounds.height())
         params.x = x; params.y = y
         bubbleView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.updateViewLayout(it, params) } }
         if (OverlayStateManager.isToolboxExpanded.value) positionToolbox()
@@ -393,11 +383,12 @@ class OverlayService : Service() {
     private fun snapBubble() {
         val params = bubbleParams ?: return
         val metrics = resources.displayMetrics
+        val bounds = OverlayWindowMetrics.bounds(this)
         val size = (60 * metrics.density).toInt()
-        params.x = if (params.x + size / 2 < metrics.widthPixels / 2) 0 else metrics.widthPixels - size
+        params.x = if (params.x + size / 2 < bounds.width() / 2) 0 else bounds.width() - size
         moveBubble(0f, 0f)
-        layoutPrefs.edit().putFloat("bubble_x", params.x.toFloat() / metrics.widthPixels)
-            .putFloat("bubble_y", params.y.toFloat() / metrics.heightPixels).apply()
+        layoutPrefs.edit().putFloat("bubble_x", params.x.toFloat() / bounds.width())
+            .putFloat("bubble_y", params.y.toFloat() / bounds.height()).apply()
     }
 
     private fun changePanel(dx: Float, dy: Float, resize: Boolean) {
@@ -405,42 +396,206 @@ class OverlayService : Service() {
         val actual = panelParams ?: return
         preferredPanel = if (resize) preferred.copy(width = actual.width + dx.toInt(), height = actual.height + dy.toInt())
             else preferred.copy(x = actual.x + dx.toInt(), y = actual.y + dy.toInt())
-        val metrics = resources.displayMetrics
-        preferredPanel = OverlayGeometry.clampPanel(preferredPanel!!, metrics.widthPixels, metrics.heightPixels, metrics.density)
+        val bounds = OverlayWindowMetrics.bounds(this)
+        preferredPanel = OverlayGeometry.clampPanel(preferredPanel!!, bounds.width(), bounds.height(), resources.displayMetrics.density)
         updatePanelBounds()
     }
 
     private fun updatePanelBounds() {
         val preferred = preferredPanel ?: return
         val params = panelParams ?: return
-        val metrics = resources.displayMetrics
-        val fit = OverlayGeometry.clampPanel(preferred, metrics.widthPixels, (metrics.heightPixels - keyboardInset).coerceAtLeast(1), metrics.density)
+        val bounds = OverlayWindowMetrics.bounds(this)
+        val fit = OverlayGeometry.clampPanel(preferred, bounds.width(), (bounds.height() - keyboardInset).coerceAtLeast(1), resources.displayMetrics.density)
         params.width = fit.width; params.height = fit.height; params.x = fit.x; params.y = fit.y
         panelView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.updateViewLayout(it, params) } }
     }
 
+    /**
+     * Single toggle for the panel's input focus. The window is added non-focusable;
+     * only the prompt field may turn focus on, and closing the keyboard, tapping
+     * outside, or hiding the panel turns it back off.
+     */
+    private fun setPanelFocus(focused: Boolean) {
+        // Capture owns the screen and the panel is hidden; focus changes here would
+        // either pop a keyboard over the captured frame or leave focus on a gone window.
+        if (OverlayStateManager.isCapturing.value || !OverlayStateManager.isPanelExpanded.value) return
+        val view = panelView ?: return
+        val params = panelParams ?: return
+        val isFocusable = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE == 0
+        if (focused && isFocusable) return
+
+        val bounds = PanelBounds(params.x, params.y, params.width, params.height)
+        val preset = if (focused) {
+            OverlayWindowParams.focusedPanel(bounds)
+        } else {
+            OverlayWindowParams.panel(bounds)
+        }
+        params.flags = preset.flags
+        params.softInputMode = preset.softInputMode
+
+        if (focused) {
+            if (view.isAttachedToWindow) {
+                runCatching { windowManager.updateViewLayout(view, params) }
+            }
+            view.post {
+                view.requestFocus()
+                ViewCompat.getWindowInsetsController(view)?.show(WindowInsetsCompat.Type.ime())
+            }
+        } else {
+            panelFocusRelease++
+            ViewCompat.getWindowInsetsController(view)?.hide(WindowInsetsCompat.Type.ime())
+            view.clearFocus()
+            if (isFocusable && view.isAttachedToWindow) {
+                runCatching { windowManager.updateViewLayout(view, params) }
+            }
+        }
+    }
+
+    /**
+     * Voice follow-ups stay behind the panel's input row, so a non-focusable panel can
+     * take a prompt without ever asking for the keyboard.
+     */
+    private fun startVoiceInput() {
+        if (OverlayStateManager.isCapturing.value || !OverlayStateManager.isPanelExpanded.value) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            VoicePermissionActivity.launch(this)
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            OverlayStateManager.setErrorMessage(
+                "Speech recognition is not available on this device. Use the follow-up suggestions instead."
+            )
+            return
+        }
+
+        stopVoiceInput()
+        val recognizer = runCatching { SpeechRecognizer.createSpeechRecognizer(this) }.getOrNull()
+        if (recognizer == null) {
+            OverlayStateManager.setErrorMessage(
+                "Could not start voice input. Use the follow-up suggestions or type a question."
+            )
+            return
+        }
+        speechRecognizer = recognizer
+        voiceListening = true
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) = Unit
+            override fun onBeginningOfSpeech() = Unit
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+            override fun onEndOfSpeech() = Unit
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                val text = partialResults
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                if (!text.isNullOrBlank()) OverlayStateManager.setDraftPrompt(text)
+            }
+
+            override fun onResults(results: Bundle?) {
+                val text = results
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    ?.trim()
+                if (!text.isNullOrBlank()) {
+                    OverlayStateManager.setDraftPrompt(text)
+                } else {
+                    OverlayStateManager.setErrorMessage(
+                        "No speech detected. Use the follow-up suggestions or type a question."
+                    )
+                }
+                stopVoiceInput()
+            }
+
+            override fun onError(error: Int) {
+                OverlayStateManager.setErrorMessage(voiceErrorMessage(error))
+                stopVoiceInput()
+            }
+        })
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+        runCatching { recognizer.startListening(intent) }.onFailure {
+            OverlayStateManager.setErrorMessage("Could not start voice input: ${it.localizedMessage}")
+            stopVoiceInput()
+        }
+    }
+
+    private fun voiceErrorMessage(error: Int): String = when (error) {
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
+            "Microphone permission denied. Use the follow-up suggestions instead."
+        SpeechRecognizer.ERROR_NO_MATCH,
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
+            "No speech detected. Use the follow-up suggestions or type a question."
+        SpeechRecognizer.ERROR_NETWORK,
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+            "Speech recognition needs a network connection. Use the follow-up suggestions instead."
+        else ->
+            "Voice input failed. Use the follow-up suggestions or type a question."
+    }
+
+    private fun stopVoiceInput() {
+        voiceListening = false
+        speechRecognizer?.let { recognizer ->
+            runCatching { recognizer.stopListening() }
+            runCatching { recognizer.cancel() }
+            runCatching { recognizer.destroy() }
+        }
+        speechRecognizer = null
+    }
+
+    private fun relocatePanelToDefaultDisplay() {
+        val bounds = OverlayWindowMetrics.bounds(this)
+        preferredPanel = preferredPanel?.let {
+            DisplayRelocation.rebase(it, bounds.width(), bounds.height(), resources.displayMetrics.density)
+        }
+        updatePanelBounds()
+        // The service's WindowManager targets the default display, so re-adding the same
+        // view instance is what actually moves it off the removed display.
+        val view = panelView
+        val params = panelParams
+        if (view != null && params != null && view.isAttachedToWindow) {
+            runCatching { windowManager.removeView(view) }
+            runCatching { windowManager.addView(view, params) }.onFailure {
+                OverlayStateManager.setErrorMessage(
+                    "Could not move Peek to the default display: ${it.localizedMessage}"
+                )
+            }
+        }
+        moveBubble(0f, 0f)
+        if (OverlayStateManager.isToolboxExpanded.value) positionToolbox()
+    }
+
     private fun savePanelBounds() {
         val bounds = preferredPanel ?: return
-        val metrics = resources.displayMetrics
-        layoutPrefs.edit().putFloat("panel_x", bounds.x.toFloat() / metrics.widthPixels)
-            .putFloat("panel_y", bounds.y.toFloat() / metrics.heightPixels)
-            .putFloat("panel_width_dp", bounds.width / metrics.density)
-            .putFloat("panel_height_dp", bounds.height / metrics.density).apply()
+        val density = resources.displayMetrics.density
+        val screen = OverlayWindowMetrics.bounds(this)
+        layoutPrefs.edit().putFloat("panel_x", bounds.x.toFloat() / screen.width())
+            .putFloat("panel_y", bounds.y.toFloat() / screen.height())
+            .putFloat("panel_width_dp", bounds.width / density)
+            .putFloat("panel_height_dp", bounds.height / density).apply()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         keyboardInset = 0
-        val metrics = resources.displayMetrics
+        val screen = OverlayWindowMetrics.bounds(this)
+        val density = resources.displayMetrics.density
         preferredPanel = preferredPanel?.copy(
-            x = (layoutPrefs.getFloat("panel_x", 0.04f) * metrics.widthPixels).toInt(),
-            y = (layoutPrefs.getFloat("panel_y", 0.10f) * metrics.heightPixels).toInt()
+            x = (layoutPrefs.getFloat("panel_x", 0.04f) * screen.width()).toInt(),
+            y = (layoutPrefs.getFloat("panel_y", 0.10f) * screen.height()).toInt()
         )
         updatePanelBounds()
         if (OverlayStateManager.isToolboxExpanded.value) positionToolbox()
         bubbleParams?.let {
-            it.x = (layoutPrefs.getFloat("bubble_x", 0.05f) * metrics.widthPixels).toInt()
-            it.y = (layoutPrefs.getFloat("bubble_y", 0.35f) * metrics.heightPixels).toInt()
+            it.x = (layoutPrefs.getFloat("bubble_x", 0.05f) * screen.width()).toInt()
+            it.y = (layoutPrefs.getFloat("bubble_y", 0.35f) * screen.height()).toInt()
         }
         moveBubble(0f, 0f)
     }
@@ -466,8 +621,8 @@ class OverlayService : Service() {
     private fun positionToolbox() {
         val button = bubbleParams ?: return
         val params = toolboxParams ?: return
-        val metrics = resources.displayMetrics
-        val fit = OverlayGeometry.toolboxBounds(button.x, button.y, metrics.widthPixels, metrics.heightPixels, metrics.density)
+        val bounds = OverlayWindowMetrics.bounds(this)
+        val fit = OverlayGeometry.toolboxBounds(button.x, button.y, bounds.width(), bounds.height(), resources.displayMetrics.density)
         params.x = fit.x; params.y = fit.y; params.width = fit.width; params.height = fit.height
         toolboxWindow?.takeIf { it.isAttachedToWindow }?.let { windowManager.updateViewLayout(it, params) }
     }
@@ -475,6 +630,8 @@ class OverlayService : Service() {
     private fun requestScreenCapture() {
         OverlayStateManager.setToolboxExpanded(false)
         if (OverlayStateManager.isCapturing.value) return
+        // Release the editor before consent or capture masks/hides the panel.
+        setPanelFocus(false)
         if (!OverlayStateManager.isScreenSharing.value) {
             ScreenCaptureActivity.launch(this)
             return
@@ -488,6 +645,7 @@ class OverlayService : Service() {
 
     private fun cropImage() {
         val bitmap = OverlayStateManager.currentImage.value ?: return
+        setPanelFocus(false)
         if (OverlayStateManager.beginCapture(replaceCurrentImage = true)) OverlayStateManager.setCapturedScreenToCrop(bitmap)
     }
 
@@ -499,6 +657,7 @@ class OverlayService : Service() {
             // retained composition cancels its window recomposer and can leave stale UI.
             fun hide(view: View?) { view?.visibility = View.GONE }
             if (capturing) {
+                stopVoiceInput()
                 hide(bubbleView); hide(panelView); hide(toolboxWindow)
                 if (bitmap != null) {
                     selectorWindow?.visibility = View.VISIBLE
@@ -521,11 +680,17 @@ class OverlayService : Service() {
                     }
                 }
             } else hide(toolboxWindow)
+            if (!expanded) {
+                setPanelFocus(false)
+                stopVoiceInput()
+            }
             val view = if (expanded) panelView else bubbleView
             hide(if (expanded) bubbleView else panelView)
             if (expanded) updatePanelBounds()
             view?.visibility = View.VISIBLE
             if (view?.isAttachedToWindow == false) {
+                // Reuse the stored params instance. Rebuilding here would reset the
+                // panel's focus/touch flag word after every capture.
                 runCatching { windowManager.addView(view, if (expanded) panelParams else bubbleParams) }.onFailure {
                     OverlayStateManager.setErrorMessage("Could not display Peek. Check overlay permission.")
                     stopSelf()
@@ -583,6 +748,8 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        displayManager?.unregisterDisplayListener(displayListener)
+        stopVoiceInput()
         if (active === this) active = null
         stopService(Intent(this, MediaProjectionService::class.java))
         OverlayStateManager.setServiceRunning(false)
@@ -618,6 +785,21 @@ class OverlayService : Service() {
     companion object {
         private var active: OverlayService? = null
         private const val ACTION_CAPTURE = "com.example.overlay.CAPTURE"
+        private const val ACTION_VOICE = "com.example.overlay.VOICE"
+
+        fun requestVoiceInput(context: Context) {
+            val service = active
+            if (service != null) {
+                service.startVoiceInput()
+            } else {
+                val intent = Intent(context, OverlayService::class.java).setAction(ACTION_VOICE)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            }
+        }
 
         fun captureScreen(context: Context, delayMs: Long = 0) {
             val service = active

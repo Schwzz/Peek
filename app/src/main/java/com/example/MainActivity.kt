@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
+import com.example.service.OverlayStartGate
 import com.example.service.OverlayStateManager
 import com.example.ui.screens.MainScreen
 import com.example.ui.screens.SettingsDialog
@@ -53,7 +54,11 @@ class MainActivity : ComponentActivity() {
                 // Request POST_NOTIFICATIONS on Android 13+
                 val notificationPermissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
-                ) { /* no-op */ }
+                ) { granted ->
+                    if (!granted) {
+                        OverlayStateManager.setErrorMessage(OverlayStartGate.NOTIFICATION_REQUIRED_MESSAGE)
+                    }
+                }
 
                 LaunchedEffect(Unit) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

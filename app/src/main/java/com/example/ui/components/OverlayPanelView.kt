@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,9 +26,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -50,9 +54,16 @@ fun OverlayPanelView(
     onCropImageRequested: () -> Unit = {},
     onMove: (Float, Float) -> Unit = { _, _ -> },
     onResize: (Float, Float) -> Unit = { _, _ -> },
-    onGeometryChanged: () -> Unit = {}
+    onGeometryChanged: () -> Unit = {},
+    onInputRequested: () -> Unit = {},
+    inputFocusRelease: Int = 0,
+    isVoiceListening: Boolean = false,
+    onVoiceRequested: () -> Unit = {},
+    onVoiceCancelRequested: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val requestInput by rememberUpdatedState(onInputRequested)
     val repo = remember { ApiConfigRepository.getInstance(context) }
     val config by repo.configFlow.collectAsState()
     val images by OverlayStateManager.images.collectAsState()
@@ -67,6 +78,9 @@ fun OverlayPanelView(
     var menu by remember { mutableStateOf(false) }
     var modelMenu by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf(false) }
+    LaunchedEffect(inputFocusRelease) {
+        if (inputFocusRelease > 0) focusManager.clearFocus(force = true)
+    }
     LaunchedEffect(currentImage) { if (currentImage == null) preview = false }
     LaunchedEffect(messages.size, loading) {
         if (messages.isNotEmpty()) list.animateScrollToItem(messages.lastIndex + if (loading) 1 else 0)
@@ -179,12 +193,42 @@ fun OverlayPanelView(
                             }
                         }
                     }
+                    if (!compact && !loading && !messages.isEmpty() && messages.last().sender == MessageSender.AI && !messages.last().isError) {
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            listOf(
+                                "Explain that in more detail",
+                                "Walk me through it step by step",
+                                "Summarize that in a few bullets"
+                            ).forEach { followUp ->
+                                TextButton(onClick = { if (OverlayStateManager.sendPrompt(followUp, context)) OverlayStateManager.setDraftPrompt("") },
+                                    enabled = !loadingImages, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                                    Text(followUp, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 140.dp))
+                                }
+                            }
+                        }
+                    }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(value = prompt, onValueChange = OverlayStateManager::setDraftPrompt,
                             placeholder = { Text(if (currentImage == null) "Ask a question" else if (images.size == 1) "Ask about this image" else "Ask about these images", style = MaterialTheme.typography.bodyMedium) },
-                            modifier = Modifier.weight(1f).heightIn(max = 100.dp).testTag("overlay_prompt_input"), maxLines = 3,
+                            modifier = Modifier.weight(1f).heightIn(max = 100.dp).testTag("overlay_prompt_input")
+                                .pointerInput(Unit) {
+                                    awaitEachGesture {
+                                        awaitFirstDown(pass = PointerEventPass.Initial)
+                                        requestInput()
+                                    }
+                                }, maxLines = 3,
                             shape = RoundedCornerShape(8.dp), textStyle = MaterialTheme.typography.bodyMedium,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }))
+                        IconButton(
+                            onClick = if (isVoiceListening) onVoiceCancelRequested else onVoiceRequested,
+                            modifier = Modifier.testTag("overlay_voice_button")
+                        ) {
+                            Icon(
+                                if (isVoiceListening) Icons.Default.Stop else Icons.Default.Mic,
+                                if (isVoiceListening) "Stop voice input" else "Voice input",
+                                Modifier.size(20.dp)
+                            )
+                        }
                         IconButton(onClick = ::send, enabled = loading || (!loadingImages && (prompt.isNotBlank() || images.isNotEmpty())), modifier = Modifier.testTag("overlay_send_button")) {
                             Icon(if (loading) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send, if (loading) "Stop generating" else "Send question", Modifier.size(20.dp))
                         }

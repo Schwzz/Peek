@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Window blur/focus fixture</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  }
+  body {
+    margin: 0 auto;
+    max-width: 960px;
+    padding: 24px;
+    line-height: 1.45;
+  }
+  h1 { font-size: 1.35rem; margin: 0 0 8px; }
+  p, li { max-width: 72ch; }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    margin: 16px 0;
+  }
+  .counters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+    margin: 16px 0;
+  }
+  .counter {
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .counter strong { display: block; font-size: 1.4rem; }
+  .counter span { font-size: .82rem; opacity: .72; }
+  button {
+    font: inherit;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+    background: transparent;
+    cursor: pointer;
+  }
+  button:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+  iframe {
+    width: 100%;
+    min-height: 120px;
+    border: 1px dashed color-mix(in srgb, currentColor 35%, transparent);
+    border-radius: 8px;
+    margin: 12px 0 20px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  caption { text-align: left; padding: 8px 0; font-weight: 600; }
+  th, td {
+    border-bottom: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    padding: 7px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; opacity: .72; }
+  code { font-size: .85em; }
+  .hint { opacity: .72; font-size: .9rem; }
+</style>
+</head>
+<body>
+  <h1>Window blur / focus fixture</h1>
+  <p>
+    Switch away from this tab and back. The first blur or focus is recorded
+    immediately (leading edge); repeats inside 5 seconds are suppressed. Focus that
+    moves into the embedded iframe is skipped. Accepted rows are written to
+    <code>localStorage</code> every 15 seconds.
+  </p>
+
+  <div class="counters" aria-live="polite">
+    <div class="counter"><strong id="accepted-count">0</strong><span>accepted events</span></div>
+    <div class="counter"><strong id="suppressed-count">0</strong><span>throttled this session</span></div>
+    <div class="counter"><strong id="skipped-count">0</strong><span>iframe focus skipped</span></div>
+    <div class="counter"><strong id="flush-count">0</strong><span>localStorage flushes</span></div>
+  </div>
+
+  <div class="toolbar">
+    <button id="clear-button" type="button">Clear stored events</button>
+    <button id="flush-button" type="button">Flush now</button>
+    <span class="hint" id="status">Waiting for a window blur or focus event.</span>
+  </div>
+
+  <p class="hint">
+    Click inside the iframe below to exercise the <code>activeElement === "IFRAME"</code>
+    skip, then click back into this page.
+  </p>
+  <iframe id="probe-frame" title="Iframe focus probe"
+          srcdoc="<!DOCTYPE html><html><body style='font-family:system-ui;padding:16px'><label>Focus inside this iframe <input autofocus placeholder='iframe input'></label></body></html>"></iframe>
+
+  <table>
+    <caption>Recorded window events (newest first)</caption>
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">Time</th>
+        <th scope="col">Event</th>
+        <th scope="col">document.activeElement</th>
+      </tr>
+    </thead>
+    <tbody id="event-rows"></tbody>
+  </table>
+
+<script type="module">
+import { createBlurFocusTracker } from './blur-events.js';
+
+const acceptedCount = document.getElementById('accepted-count');
+const suppressedCount = document.getElementById('suppressed-count');
+const skippedCount = document.getElementById('skipped-count');
+const flushCount = document.getElementById('flush-count');
+const status = document.getElementById('status');
+const rows = document.getElementById('event-rows');
+
+const tracker = createBlurFocusTracker({ onFlush: () => render() });
+
+function describeActiveElement() {
+  const element = document.activeElement;
+  if (!element) return '(none)';
+  const tag = element.tagName || element.nodeName || 'UNKNOWN';
+  if (tag === 'IFRAME') return 'IFRAME';
+  const id = element.id ? '#' + element.id : '';
+  return tag.toLowerCase() + id;
+}
+
+function renderRow(event) {
+  const row = document.createElement('tr');
+  [String(event.sequence), event.at, event.type, event.activeElement].forEach((value) => {
+    const cell = document.createElement('td');
+    cell.textContent = value;
+    row.appendChild(cell);
+  });
+  return row;
+}
+
+function render() {
+  const state = tracker.state();
+  acceptedCount.textContent = String(state.events.length);
+  suppressedCount.textContent = String(state.suppressed);
+  skippedCount.textContent = String(state.skipped);
+  flushCount.textContent = String(state.flushes);
+
+  if (!state.events.length) {
+    rows.innerHTML = '<tr><td colspan="4">No events recorded yet.</td></tr>';
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  state.events.slice().reverse().forEach((event) => fragment.appendChild(renderRow(event)));
+  rows.replaceChildren(fragment);
+}
+
+function handleWindowEvent(type) {
+  const active = document.activeElement;
+  const tag = active && active.tagName ? active.tagName : null;
+  const result = tracker.handleWindowEvent(type, { tag, label: describeActiveElement() });
+  if (result === 'skipped') {
+    status.textContent = 'Skipped ' + type + ': activeElement is the IFRAME.';
+  } else if (result === 'suppressed') {
+    status.textContent = 'Suppressed a ' + type + ' event inside the 5000 ms window.';
+  } else {
+    status.textContent = 'Recorded window ' + type + ' (leading edge).';
+  }
+  render();
+}
+
+window.addEventListener('blur', () => handleWindowEvent('blur'));
+window.addEventListener('focus', () => handleWindowEvent('focus'));
+window.addEventListener('pagehide', () => tracker.flush());
+window.addEventListener('beforeunload', () => tracker.flush());
+
+document.getElementById('flush-button').addEventListener('click', () => {
+  tracker.flush();
+  render();
+  status.textContent = 'Flushed ' + tracker.state().events.length +
+    ' event(s) to localStorage at ' + new Date().toLocaleTimeString() + '.';
+});
+
+document.getElementById('clear-button').addEventListener('click', () => {
+  tracker.clear();
+  render();
+  status.textContent = 'Cleared stored events.';
+});
+
+tracker.startAutoFlush();
+render();
+</script>
+</body>
+</html>

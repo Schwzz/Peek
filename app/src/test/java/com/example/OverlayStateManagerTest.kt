@@ -84,6 +84,13 @@ class OverlayStateManagerTest {
         assertNull(OverlayStateManager.capturedScreenToCrop.value)
     }
 
+    @Test fun typedDraftSurvivesACaptureCycle() {
+        OverlayStateManager.setDraftPrompt("what is this chart")
+        assertTrue(OverlayStateManager.beginCapture())
+        OverlayStateManager.finishCapture()
+        assertEquals("what is this chart", OverlayStateManager.draftPrompt.value)
+    }
+
     @Test fun toolboxAndChatAreExclusiveWithoutStartingCapture() {
         val version = OverlayStateManager.captureVersion
         OverlayStateManager.setPanelExpanded(true)
