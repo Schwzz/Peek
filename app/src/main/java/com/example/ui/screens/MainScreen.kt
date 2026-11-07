@@ -1,8 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -32,6 +34,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.api.ApiConfigRepository
 import com.example.service.OverlayService
+import com.example.service.OverlayStartGate
 import com.example.service.OverlayStateManager
 import com.example.ui.components.OverlayPanelView
 import com.example.ui.theme.CyanPrimary
@@ -51,12 +54,14 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
     val messages by OverlayStateManager.chatMessages.collectAsState()
     val configured = repo.isConfigured(config)
     var hasPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var hasNotifications by remember { mutableStateOf(OverlayStartGate.canStart(context)) }
     var showChat by rememberSaveable { mutableStateOf(false) }
     val owner = LocalLifecycleOwner.current
     DisposableEffect(owner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 hasPermission = Settings.canDrawOverlays(context)
+                hasNotifications = OverlayStartGate.canStart(context)
                 if (!hasPermission && OverlayStateManager.isServiceRunning.value) OverlayService.stop(context)
             }
         }
@@ -75,8 +80,34 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
     fun permission() {
         context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")))
     }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        hasNotifications = OverlayStartGate.canStart(context)
+        if (granted) {
+            if (OverlayStateManager.errorMessage.value == OverlayStartGate.NOTIFICATION_REQUIRED_MESSAGE) {
+                OverlayStateManager.setErrorMessage(null)
+            }
+        } else {
+            OverlayStateManager.setErrorMessage(OverlayStartGate.NOTIFICATION_REQUIRED_MESSAGE)
+        }
+    }
+    fun requestNotifications() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (OverlayStartGate.canStart(context)) {
+            context.startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            )
+        } else {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
     fun startOverApps(captureWhenReady: Boolean) {
         if (!Settings.canDrawOverlays(context)) { permission(); return }
+        val notificationBlocker = OverlayStartGate.notificationBlocker(context)
+        if (notificationBlocker != null) {
+            OverlayStateManager.setErrorMessage(notificationBlocker)
+            return
+        }
         runCatching {
             OverlayService.start(context)
             // Put Peek's main task away before opening the isolated consent task or capturing.
@@ -137,6 +168,13 @@ fun MainScreen(onOpenSettingsRequested: () -> Unit) {
                     Text("CONNECTIONS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     SetupRow("Model", if (configured) "${config.provider.displayName} · ${config.modelName}" else "Choose a local or cloud model", configured, "Change", onOpenSettingsRequested)
                     SetupRow("Display over apps", if (hasPermission) "Allowed" else "Permission needed", hasPermission, if (hasPermission) "Manage" else "Allow", ::permission)
+                    SetupRow(
+                        "Notifications",
+                        if (hasNotifications) "Allowed" else "Required for the overlay's persistent notification",
+                        hasNotifications,
+                        if (hasNotifications) "Manage" else "Allow",
+                        ::requestNotifications
+                    )
                     SetupRow("Screen access", if (sharing) "Active across apps" else "Approve once per session", sharing, if (sharing) "Stop" else "Enable", {
                         if (sharing) context.stopService(Intent(context, com.example.service.MediaProjectionService::class.java)) else startOverApps(false)
                     })
