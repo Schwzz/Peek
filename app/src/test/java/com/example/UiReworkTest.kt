@@ -65,6 +65,19 @@ class UiReworkTest {
         ui.onNodeWithTag("overlay_prompt_input").assertTextContains("Keep this draft")
     }
 
+    @Test fun releasingEditorFocusKeepsTheDraft() {
+        val release = androidx.compose.runtime.mutableStateOf(0)
+        ui.setContent { PeekTheme { androidx.compose.foundation.layout.Box(Modifier.width(320.dp).height(440.dp)) {
+            OverlayPanelView(modifier = Modifier.fillMaxSize(), onCaptureScreenRequested = {},
+                onPickImageRequested = {}, onMinimizeRequested = {}, onCloseRequested = {},
+                onOpenSettingsRequested = {}, inputFocusRelease = release.value)
+        } } }
+        ui.onNodeWithTag("overlay_prompt_input").performTextInput("Draft survives capture")
+        ui.runOnIdle { release.value += 1 }
+        ui.waitForIdle()
+        ui.onNodeWithTag("overlay_prompt_input").assertTextContains("Draft survives capture")
+    }
+
     @Test fun modelSettingsKeepLocalAndCloudDraftsSeparate() {
         val repo = com.example.data.api.ApiConfigRepository.getInstance(ui.activity)
         repo.saveConfig(com.example.data.api.ApiConfig(modelName = "cloud-test"))
