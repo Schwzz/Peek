@@ -14,5 +14,15 @@ is available unless the row says otherwise, and the panel is the floating overla
 | 3 | With the keyboard closed, tap outside the panel. | The panel dismisses without opening a keyboard, and the underlying app keeps the tap. | unverified |
 | 4 | Focus the prompt field, leave the keyboard open, then start a screen-region capture. | The capture hides the panel and keyboard. After the capture finishes, the panel returns with the same window flags, and the keyboard does not reappear by itself. | unverified |
 | 5 | Rotate the device while the panel is visible, including with the keyboard open. | The panel is re-clamped fully on screen in the new orientation; no edge is outside the display and no stale keyboard inset remains. | unverified |
-| 6 | Enter split-screen mode with Peek open, move the panel to one half, then resize or swap the split. | The panel stays in its chosen half of the display and remains fully visible; it does not jump to the other half. | unverified |
+| 6 | Enter split-screen mode with Peek open, move the panel to one half, then resize or swap the split. | The panel stays in its chosen half of the display and remains fully visible; it does not jump to the other half. | known limitation |
 | 7 | Kill the projection from the system screen-sharing control (or stop the media projection service), then tap a capture action. | The overlay itself keeps working. The next capture prompts for fresh screen-capture consent instead of silently failing with a stale session. | unverified |
+
+Row 6 is a **known limitation**, not a pending verification. `OverlayWindowMetrics` asks
+`WindowManager.getCurrentWindowMetrics()` from the service context on API 30+, and on SDK 34
+that returns the whole display rather than a split-screen cell (see
+`OverlayWindowMetricsTest`). The panel is therefore still free to float over the other app's
+half; the row stays here so a future platform change can be re-checked.
+
+Row 4 is covered at the state level by
+`OverlayStateManagerTest.typedDraftSurvivesACaptureCycle` and
+`UiReworkTest.releasingEditorFocusKeepsTheDraft`: the typed draft was not dropped.

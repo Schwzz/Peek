@@ -13,13 +13,17 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.view.Display
 import android.view.KeyEvent
 import android.widget.FrameLayout
 import android.view.MotionEvent
@@ -92,6 +96,11 @@ class OverlayService : Service() {
     private var panelFocusRelease by mutableIntStateOf(0)
     private var speechRecognizer: SpeechRecognizer? = null
     private var voiceListening by mutableStateOf(false)
+    private var displayManager: DisplayManager? = null
+    private val displayListener = OverlayDisplayListener(
+        panelDisplayId = { panelView?.display?.displayId ?: Display.DEFAULT_DISPLAY },
+        onPanelDisplayRemoved = { relocatePanelToDefaultDisplay() }
+    )
 
     private var selectorWindow: FrameLayout? = null
     private var selectorCompose: ComposeView? = null
@@ -110,6 +119,8 @@ class OverlayService : Service() {
         super.onCreate()
         active = this
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        displayManager = getSystemService(DisplayManager::class.java)
+        displayManager?.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         createNotificationChannel()
 
         val notification = createNotification()
@@ -153,10 +164,10 @@ class OverlayService : Service() {
         val owner = lifecycleOwner ?: return
 
         // 1. Setup Floating Bubble
-        val metrics = resources.displayMetrics
+        val bubbleBounds = OverlayWindowMetrics.bounds(this)
         bubbleParams = OverlayWindowParams.bubble(
-            (layoutPrefs.getFloat("bubble_x", 0.05f) * metrics.widthPixels).toInt(),
-            (layoutPrefs.getFloat("bubble_y", 0.35f) * metrics.heightPixels).toInt()
+            (layoutPrefs.getFloat("bubble_x", 0.05f) * bubbleBounds.width()).toInt(),
+            (layoutPrefs.getFloat("bubble_y", 0.35f) * bubbleBounds.height()).toInt()
         )
 
         bubbleView = ComposeView(this).apply {
@@ -190,16 +201,17 @@ class OverlayService : Service() {
 
         // 2. Setup Overlay Panel - bound strictly to the panel's dimensions so taps outside reach underlying app
         val displayMetrics = resources.displayMetrics
+        val panelScreen = OverlayWindowMetrics.bounds(this)
         val migrateToolkit = !layoutPrefs.getBoolean("toolkit_layout_v2", false)
         val widthDp = layoutPrefs.getFloat("panel_width_dp", 320f).let { if (migrateToolkit) it.coerceAtMost(320f) else it }
         val heightDp = layoutPrefs.getFloat("panel_height_dp", 440f).let { if (migrateToolkit) it.coerceAtMost(440f) else it }
         val panelWidth = (widthDp * displayMetrics.density).toInt()
         val panelHeight = (heightDp * displayMetrics.density).toInt()
         preferredPanel = OverlayGeometry.clampPanel(PanelBounds(
-            (layoutPrefs.getFloat("panel_x", ((displayMetrics.widthPixels - panelWidth) / displayMetrics.widthPixels.toFloat()).coerceAtLeast(0f)) * displayMetrics.widthPixels).toInt(),
-            (layoutPrefs.getFloat("panel_y", 0.10f) * displayMetrics.heightPixels).toInt(),
+            (layoutPrefs.getFloat("panel_x", ((panelScreen.width() - panelWidth) / panelScreen.width().toFloat()).coerceAtLeast(0f)) * panelScreen.width()).toInt(),
+            (layoutPrefs.getFloat("panel_y", 0.10f) * panelScreen.height()).toInt(),
             panelWidth, panelHeight
-        ), displayMetrics.widthPixels, displayMetrics.heightPixels, displayMetrics.density)
+        ), panelScreen.width(), panelScreen.height(), displayMetrics.density)
 
         if (migrateToolkit) {
             savePanelBounds()
@@ -359,9 +371,10 @@ class OverlayService : Service() {
 
     private fun moveBubble(dx: Float, dy: Float) {
         val params = bubbleParams ?: return
-        val metrics = resources.displayMetrics
-        val size = (60 * metrics.density).toInt()
-        val (x, y) = OverlayGeometry.clampBubble(params.x + dx.toInt(), params.y + dy.toInt(), size, metrics.widthPixels, metrics.heightPixels)
+        val density = resources.displayMetrics.density
+        val bounds = OverlayWindowMetrics.bounds(this)
+        val size = (60 * density).toInt()
+        val (x, y) = OverlayGeometry.clampBubble(params.x + dx.toInt(), params.y + dy.toInt(), size, bounds.width(), bounds.height())
         params.x = x; params.y = y
         bubbleView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.updateViewLayout(it, params) } }
         if (OverlayStateManager.isToolboxExpanded.value) positionToolbox()
@@ -370,11 +383,12 @@ class OverlayService : Service() {
     private fun snapBubble() {
         val params = bubbleParams ?: return
         val metrics = resources.displayMetrics
+        val bounds = OverlayWindowMetrics.bounds(this)
         val size = (60 * metrics.density).toInt()
-        params.x = if (params.x + size / 2 < metrics.widthPixels / 2) 0 else metrics.widthPixels - size
+        params.x = if (params.x + size / 2 < bounds.width() / 2) 0 else bounds.width() - size
         moveBubble(0f, 0f)
-        layoutPrefs.edit().putFloat("bubble_x", params.x.toFloat() / metrics.widthPixels)
-            .putFloat("bubble_y", params.y.toFloat() / metrics.heightPixels).apply()
+        layoutPrefs.edit().putFloat("bubble_x", params.x.toFloat() / bounds.width())
+            .putFloat("bubble_y", params.y.toFloat() / bounds.height()).apply()
     }
 
     private fun changePanel(dx: Float, dy: Float, resize: Boolean) {
@@ -382,16 +396,16 @@ class OverlayService : Service() {
         val actual = panelParams ?: return
         preferredPanel = if (resize) preferred.copy(width = actual.width + dx.toInt(), height = actual.height + dy.toInt())
             else preferred.copy(x = actual.x + dx.toInt(), y = actual.y + dy.toInt())
-        val metrics = resources.displayMetrics
-        preferredPanel = OverlayGeometry.clampPanel(preferredPanel!!, metrics.widthPixels, metrics.heightPixels, metrics.density)
+        val bounds = OverlayWindowMetrics.bounds(this)
+        preferredPanel = OverlayGeometry.clampPanel(preferredPanel!!, bounds.width(), bounds.height(), resources.displayMetrics.density)
         updatePanelBounds()
     }
 
     private fun updatePanelBounds() {
         val preferred = preferredPanel ?: return
         val params = panelParams ?: return
-        val metrics = resources.displayMetrics
-        val fit = OverlayGeometry.clampPanel(preferred, metrics.widthPixels, (metrics.heightPixels - keyboardInset).coerceAtLeast(1), metrics.density)
+        val bounds = OverlayWindowMetrics.bounds(this)
+        val fit = OverlayGeometry.clampPanel(preferred, bounds.width(), (bounds.height() - keyboardInset).coerceAtLeast(1), resources.displayMetrics.density)
         params.width = fit.width; params.height = fit.height; params.x = fit.x; params.y = fit.y
         panelView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.updateViewLayout(it, params) } }
     }
@@ -536,28 +550,52 @@ class OverlayService : Service() {
         speechRecognizer = null
     }
 
+    private fun relocatePanelToDefaultDisplay() {
+        val bounds = OverlayWindowMetrics.bounds(this)
+        preferredPanel = preferredPanel?.let {
+            DisplayRelocation.rebase(it, bounds.width(), bounds.height(), resources.displayMetrics.density)
+        }
+        updatePanelBounds()
+        // The service's WindowManager targets the default display, so re-adding the same
+        // view instance is what actually moves it off the removed display.
+        val view = panelView
+        val params = panelParams
+        if (view != null && params != null && view.isAttachedToWindow) {
+            runCatching { windowManager.removeView(view) }
+            runCatching { windowManager.addView(view, params) }.onFailure {
+                OverlayStateManager.setErrorMessage(
+                    "Could not move Peek to the default display: ${it.localizedMessage}"
+                )
+            }
+        }
+        moveBubble(0f, 0f)
+        if (OverlayStateManager.isToolboxExpanded.value) positionToolbox()
+    }
+
     private fun savePanelBounds() {
         val bounds = preferredPanel ?: return
-        val metrics = resources.displayMetrics
-        layoutPrefs.edit().putFloat("panel_x", bounds.x.toFloat() / metrics.widthPixels)
-            .putFloat("panel_y", bounds.y.toFloat() / metrics.heightPixels)
-            .putFloat("panel_width_dp", bounds.width / metrics.density)
-            .putFloat("panel_height_dp", bounds.height / metrics.density).apply()
+        val density = resources.displayMetrics.density
+        val screen = OverlayWindowMetrics.bounds(this)
+        layoutPrefs.edit().putFloat("panel_x", bounds.x.toFloat() / screen.width())
+            .putFloat("panel_y", bounds.y.toFloat() / screen.height())
+            .putFloat("panel_width_dp", bounds.width / density)
+            .putFloat("panel_height_dp", bounds.height / density).apply()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         keyboardInset = 0
-        val metrics = resources.displayMetrics
+        val screen = OverlayWindowMetrics.bounds(this)
+        val density = resources.displayMetrics.density
         preferredPanel = preferredPanel?.copy(
-            x = (layoutPrefs.getFloat("panel_x", 0.04f) * metrics.widthPixels).toInt(),
-            y = (layoutPrefs.getFloat("panel_y", 0.10f) * metrics.heightPixels).toInt()
+            x = (layoutPrefs.getFloat("panel_x", 0.04f) * screen.width()).toInt(),
+            y = (layoutPrefs.getFloat("panel_y", 0.10f) * screen.height()).toInt()
         )
         updatePanelBounds()
         if (OverlayStateManager.isToolboxExpanded.value) positionToolbox()
         bubbleParams?.let {
-            it.x = (layoutPrefs.getFloat("bubble_x", 0.05f) * metrics.widthPixels).toInt()
-            it.y = (layoutPrefs.getFloat("bubble_y", 0.35f) * metrics.heightPixels).toInt()
+            it.x = (layoutPrefs.getFloat("bubble_x", 0.05f) * screen.width()).toInt()
+            it.y = (layoutPrefs.getFloat("bubble_y", 0.35f) * screen.height()).toInt()
         }
         moveBubble(0f, 0f)
     }
@@ -583,8 +621,8 @@ class OverlayService : Service() {
     private fun positionToolbox() {
         val button = bubbleParams ?: return
         val params = toolboxParams ?: return
-        val metrics = resources.displayMetrics
-        val fit = OverlayGeometry.toolboxBounds(button.x, button.y, metrics.widthPixels, metrics.heightPixels, metrics.density)
+        val bounds = OverlayWindowMetrics.bounds(this)
+        val fit = OverlayGeometry.toolboxBounds(button.x, button.y, bounds.width(), bounds.height(), resources.displayMetrics.density)
         params.x = fit.x; params.y = fit.y; params.width = fit.width; params.height = fit.height
         toolboxWindow?.takeIf { it.isAttachedToWindow }?.let { windowManager.updateViewLayout(it, params) }
     }
@@ -710,6 +748,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        displayManager?.unregisterDisplayListener(displayListener)
         stopVoiceInput()
         if (active === this) active = null
         stopService(Intent(this, MediaProjectionService::class.java))
