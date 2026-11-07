@@ -22,7 +22,7 @@ Branch: `refactor/overlay-window-hygiene` (from `origin/main`). Working tree was
 
 **Foreground service types:** OverlayService `specialUse|dataSync` (subtype property set), MediaProjectionService `mediaProjection`. Per-API `startForeground` type selection matches the manifest.
 
-**Permissions:** `SYSTEM_ALERT_WINDOW` gated in `onCreate` (`Settings.canDrawOverlays`) with a state error message + `stopSelf` fallback; `POST_NOTIFICATIONS`, `SATE`, picker flows handled in `MainActivity`/ImagePicker (out of scope for this branch unless a gap shows up).
+**Permissions:** `SYSTEM_ALERT_WINDOW` gated in `onCreate` (`Settings.canDrawOverlays`) with a state error message + `stopSelf` fallback; `POST_NOTIFICATIONS` is now enforced by `OverlayStartGate` in `MainScreen` (refuses to start with an inline reason on Android 13+); `SATE`, picker flows handled in `MainActivity`/ImagePicker.
 
 ## Scope of this branch (and deliberate exclusions)
 
@@ -40,17 +40,18 @@ Deliberately excluded (not in this branch):
 - The panel focus behavior is Robolectric-pinned (idle and focused `WindowManager.LayoutParams` presets) but not yet device-verified; the real tap-to-focus and keyboard-close transitions still need an on-device check.
 - `ScreenCaptureHelper.capture()`'s 200ms settle delay after hiding is empirical (compositor latency), not a frame-count guarantee.
 - `OverlayStateManager`'s `scope` is a global object scope - acceptable for a singleton owned by app lifetime, noted for future teardown work.
-- Split-screen behavior has no explicit multi-window bounds handling: `OverlayService.onConfigurationChanged` recomputes from saved fractional positions and clamps to `resources.displayMetrics`. The left/right half invariant is device-unverified.
-- Display disconnect has no explicit `DisplayManager` listener; session teardown relies on `MediaProjection.Callback.onStop` calling `MediaProjectionService.handleProjectionStopped()`. External-display removal is device-unverified.
-- Denied `POST_NOTIFICATIONS` is silent: `MainActivity` asks once with a no-op result callback. The foreground service still runs, but its notification may not appear in the shade; no UI explains that.
+- Split-screen is a known limitation, not a fix: `OverlayWindowMetrics` calls `WindowManager.getCurrentWindowMetrics()` from the service on API 30+ and falls back to `displayMetrics`, but on SDK 34 the service gets the whole display (`OverlayWindowMetricsTest`), so the panel can float over the other app's half.
+- Display removal is now observed (`DisplayManager.DisplayListener` registered in `OverlayService.onCreate`, unregistered in `onDestroy`). If the panel's display is removed, `DisplayRelocation.rebase` re-clamps it to the default display; covered by `OverlayDisplayListenerTest` with a fake listener. Real external-display removal is device-unverified.
+- Denied `POST_NOTIFICATIONS` now refuses to start the overlay with an inline reason (`OverlayStartGate` + a Notifications row in `MainScreen`) instead of silently running a foreground service whose notification is hidden. Granted and denied paths are tested in `NotificationPermissionGateTest`.
 - Voice follow-up is implemented but not device-verified: runtime microphone permission, recognizer results, and the no-keyboard follow-up path need an on-device check.
 
 ## Verification log (this environment)
 - `WindowManager.LayoutParams` construction in the codebase now happens only inside `OverlayWindowParams.kt` (`grep "WindowManager.LayoutParams("` → 6 matches, all inside the builder object + test file).
 - Local Gradle caveats, unrelated to this change: `local.properties` had to be written (`sdk.dir=C:/Users/SUHARTO/AppData/Local/Android/Sdk`); Gradle/AGP fails under the machine's JDK 26/JDK 25 with a `JdkImageTransform` jlink error, so builds here run with `JAVA_HOME` pointed at Eclipse Temurin JDK 21; `google-services.json` is absent so the Google Services plugin runs in its WARN strategy (build still succeeds).
-- `:app:testDebugUnitTest` → BUILD SUCCESSFUL, including `OverlayWindowParamsTest` (5 tests: bubble, idle panel, focused panel, toolbox, selector invariants), `OverlayServiceCaptureTest` (capture params identity/flags, focus gating, voice recognizer teardown), `MediaProjectionServiceTest` (projection stop stops the service and clears sharing state), and `OverlayServicePermissionTest` (denied overlay permission stops the service).
-- `test/DEVICE-CHECKLIST.md` is an authoring artifact only: every row is still `unverified` until run on a physical device.
-- `test/blur-fixture.html` is a standalone browser fixture; it has not been executed in a browser here.
+- `:app:testDebugUnitTest` → BUILD SUCCESSFUL, including `OverlayWindowParamsTest` (5 presets), `OverlayServiceCaptureTest` (capture params identity/flags, focus gating, voice recognizer teardown), `MediaProjectionServiceTest`, `OverlayServicePermissionTest`, `OverlayDisplayListenerTest` (fake DisplayListener + re-clamp), `OverlayWindowMetricsTest` (service window metrics equal the whole display on SDK 34), and `NotificationPermissionGateTest` (granted starts, denied refuses and explains inline).
+- `node --test test/blur-events.test.js` → 5/5 pass (leading edge, 5s suppression, post-window re-record, IFRAME skip, 15s flush clears pending).
+- `test/DEVICE-CHECKLIST.md`: every row is `unverified` except row 6, which is a documented known limitation.
+- `test/blur-fixture.html` + `test/blur-events.js` are served at `http://127.0.0.1:8765/blur-fixture.html` for manual browser checks; the browser interaction itself has not been automated here.
 
 ## API-verified correction
 - `MediaProjectionManager` has **no** `getMediaProjection(resultCode, resultData, config)` overload (checked framework docs, API through 37): the `MediaProjectionConfig` path is only `createScreenCaptureIntent(config)`, which `ScreenCaptureActivity` already calls with `createConfigForDefaultDisplay()` on API 34+. An intermediate commit that assumed otherwise was reverted; the consent single-use invariant is enforced structurally (nothing caches `resultData`; stop → service death → fresh consent on next capture).

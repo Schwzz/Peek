@@ -112,161 +112,87 @@
     <tbody id="event-rows"></tbody>
   </table>
 
-<script>
-/*
- * Behavior modeled on the Canvas LMS blur/focus event stream:
- *   - canvas-lms/ui/shared/page_blurred.js
- *   - canvas-lms/ui/shared/page_focused.js
- *   - canvas-lms/ui/shared/event_manager.js
- *
- * The fixture keeps the same three invariants those files care about:
- *   1. window blur/focus listeners;
- *   2. a 5000 ms leading-edge throttle (first event wins, then quiet);
- *   3. skip when document.activeElement is the IFRAME, because moving focus into
- *      an embedded frame is not the page being backgrounded.
- * Accepted rows are flushed to localStorage every 15000 ms.
- */
-(() => {
-  'use strict';
+<script type="module">
+import { createBlurFocusTracker } from './blur-events.js';
 
-  const STORAGE_KEY = 'peek.blurFocusEvents.v1';
-  const THROTTLE_MS = 5000;
-  const FLUSH_MS = 15000;
-  const MAX_ROWS = 500;
+const acceptedCount = document.getElementById('accepted-count');
+const suppressedCount = document.getElementById('suppressed-count');
+const skippedCount = document.getElementById('skipped-count');
+const flushCount = document.getElementById('flush-count');
+const status = document.getElementById('status');
+const rows = document.getElementById('event-rows');
 
-  const acceptedCount = document.getElementById('accepted-count');
-  const suppressedCount = document.getElementById('suppressed-count');
-  const skippedCount = document.getElementById('skipped-count');
-  const flushCount = document.getElementById('flush-count');
-  const status = document.getElementById('status');
-  const rows = document.getElementById('event-rows');
+const tracker = createBlurFocusTracker({ onFlush: () => render() });
 
-  let events = loadEvents();
-  let lastRecordedAt = 0;
-  let suppressed = 0;
-  let skipped = 0;
-  let flushes = 0;
+function describeActiveElement() {
+  const element = document.activeElement;
+  if (!element) return '(none)';
+  const tag = element.tagName || element.nodeName || 'UNKNOWN';
+  if (tag === 'IFRAME') return 'IFRAME';
+  const id = element.id ? '#' + element.id : '';
+  return tag.toLowerCase() + id;
+}
 
-  function loadEvents() {
-    try {
-      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      return Array.isArray(stored) ? stored.slice(-MAX_ROWS) : [];
-    } catch (_) {
-      return [];
-    }
+function renderRow(event) {
+  const row = document.createElement('tr');
+  [String(event.sequence), event.at, event.type, event.activeElement].forEach((value) => {
+    const cell = document.createElement('td');
+    cell.textContent = value;
+    row.appendChild(cell);
+  });
+  return row;
+}
+
+function render() {
+  const state = tracker.state();
+  acceptedCount.textContent = String(state.events.length);
+  suppressedCount.textContent = String(state.suppressed);
+  skippedCount.textContent = String(state.skipped);
+  flushCount.textContent = String(state.flushes);
+
+  if (!state.events.length) {
+    rows.innerHTML = '<tr><td colspan="4">No events recorded yet.</td></tr>';
+    return;
   }
+  const fragment = document.createDocumentFragment();
+  state.events.slice().reverse().forEach((event) => fragment.appendChild(renderRow(event)));
+  rows.replaceChildren(fragment);
+}
 
-  function persist() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(events.slice(-MAX_ROWS)));
-    } catch (error) {
-      status.textContent = 'Could not write localStorage: ' + error.message;
-    }
-    flushes += 1;
-    flushCount.textContent = String(flushes);
-    status.textContent = 'Flushed ' + events.length + ' event(s) to localStorage at ' +
-      new Date().toLocaleTimeString() + '.';
-  }
-
-  function describeActiveElement() {
-    const element = document.activeElement;
-    if (!element) return '(none)';
-    const tag = element.tagName || element.nodeName || 'UNKNOWN';
-    if (tag === 'IFRAME') return 'IFRAME';
-    const id = element.id ? '#' + element.id : '';
-    return tag.toLowerCase() + id;
-  }
-
-  function focusIsInsideIframe() {
-    const element = document.activeElement;
-    return !!element && element.tagName === 'IFRAME';
-  }
-
-  function updateCounters() {
-    acceptedCount.textContent = String(events.length);
-    suppressedCount.textContent = String(suppressed);
-    skippedCount.textContent = String(skipped);
-    flushCount.textContent = String(flushes);
-  }
-
-  function renderRows() {
-    if (!events.length) {
-      rows.innerHTML = '<tr><td colspan="4">No events recorded yet.</td></tr>';
-      return;
-    }
-    const fragment = document.createDocumentFragment();
-    events.slice().reverse().forEach((event) => {
-      const row = document.createElement('tr');
-      const cells = [
-        String(event.sequence),
-        event.at,
-        event.type,
-        event.activeElement
-      ];
-      cells.forEach((value) => {
-        const cell = document.createElement('td');
-        cell.textContent = value;
-        row.appendChild(cell);
-      });
-      fragment.appendChild(row);
-    });
-    rows.replaceChildren(fragment);
-  }
-
-  function record(type) {
-    const now = performance.now();
-    if (now - lastRecordedAt < THROTTLE_MS) {
-      suppressed += 1;
-      updateCounters();
-      status.textContent = 'Suppressed a ' + type + ' event inside the 5000 ms window.';
-      return;
-    }
-    lastRecordedAt = now;
-    events.push({
-      sequence: events.length + 1,
-      at: new Date().toISOString(),
-      type,
-      activeElement: describeActiveElement()
-    });
-    if (events.length > MAX_ROWS) events = events.slice(-MAX_ROWS);
-    updateCounters();
-    renderRows();
+function handleWindowEvent(type) {
+  const active = document.activeElement;
+  const tag = active && active.tagName ? active.tagName : null;
+  const result = tracker.handleWindowEvent(type, { tag, label: describeActiveElement() });
+  if (result === 'skipped') {
+    status.textContent = 'Skipped ' + type + ': activeElement is the IFRAME.';
+  } else if (result === 'suppressed') {
+    status.textContent = 'Suppressed a ' + type + ' event inside the 5000 ms window.';
+  } else {
     status.textContent = 'Recorded window ' + type + ' (leading edge).';
   }
+  render();
+}
 
-  function handleWindowEvent(type) {
-    if (focusIsInsideIframe()) {
-      skipped += 1;
-      updateCounters();
-      status.textContent = 'Skipped ' + type + ': activeElement is the IFRAME.';
-      return;
-    }
-    record(type);
-  }
+window.addEventListener('blur', () => handleWindowEvent('blur'));
+window.addEventListener('focus', () => handleWindowEvent('focus'));
+window.addEventListener('pagehide', () => tracker.flush());
+window.addEventListener('beforeunload', () => tracker.flush());
 
-  window.addEventListener('blur', () => handleWindowEvent('blur'));
-  window.addEventListener('focus', () => handleWindowEvent('focus'));
-  window.addEventListener('pagehide', persist);
-  window.addEventListener('beforeunload', persist);
+document.getElementById('flush-button').addEventListener('click', () => {
+  tracker.flush();
+  render();
+  status.textContent = 'Flushed ' + tracker.state().events.length +
+    ' event(s) to localStorage at ' + new Date().toLocaleTimeString() + '.';
+});
 
-  document.getElementById('flush-button').addEventListener('click', persist);
-  document.getElementById('clear-button').addEventListener('click', () => {
-    events = [];
-    lastRecordedAt = 0;
-    suppressed = 0;
-    skipped = 0;
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch (_) { /* ignore storage failures */ }
-    updateCounters();
-    renderRows();
-    status.textContent = 'Cleared stored events.';
-  });
+document.getElementById('clear-button').addEventListener('click', () => {
+  tracker.clear();
+  render();
+  status.textContent = 'Cleared stored events.';
+});
 
-  updateCounters();
-  renderRows();
-  setInterval(persist, FLUSH_MS);
-})();
+tracker.startAutoFlush();
+render();
 </script>
 </body>
 </html>
