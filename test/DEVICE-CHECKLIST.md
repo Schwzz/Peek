@@ -4,8 +4,8 @@ Authoring this file does not require an emulator or device. Every row starts as
 **unverified** and only becomes verified after someone runs it on a real device and
 records the observed result.
 
-Preconditions for every row: Peek overlay service is running, a screen capture session
-is available unless the row says otherwise, and the panel is the floating overlay variant.
+Preconditions for every row: the panel is the floating overlay variant; a screen capture
+session is available and the overlay service is running unless the row says otherwise.
 
 | # | Step | Expected result | Status |
 |---|------|-----------------|--------|
@@ -16,6 +16,7 @@ is available unless the row says otherwise, and the panel is the floating overla
 | 5 | Rotate the device while the panel is visible, including with the keyboard open. | The panel is re-clamped fully on screen in the new orientation; no edge is outside the display and no stale keyboard inset remains. | unverified |
 | 6 | Enter split-screen mode with Peek open, move the panel to one half, then resize or swap the split. | The panel stays in its chosen half of the display and remains fully visible; it does not jump to the other half. | known limitation |
 | 7 | Kill the projection from the system screen-sharing control (or stop the media projection service), then tap a capture action. | The overlay itself keeps working. The next capture prompts for fresh screen-capture consent instead of silently failing with a stale session. | unverified |
+| 8 | With Peek stopped, deny notifications on Android 13+, tap Start Peek, then re-grant notifications in system settings and tap Start Peek again. | While denied, Peek refuses to start and shows the inline reason that the persistent notification is required. After re-granting, Start Peek starts the overlay without reinstalling or clearing data. | unverified |
 
 Row 6 is a **known limitation**, not a pending verification. `OverlayWindowMetrics` asks
 `WindowManager.getCurrentWindowMetrics()` from the service context on API 30+, and on SDK 34
